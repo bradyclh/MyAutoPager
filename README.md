@@ -1,0 +1,123 @@
+# MyAutoPager
+
+自動無縫翻頁 Tampermonkey 腳本 — 將下一頁內容無縫載入至網頁底部，無需手動點擊下一頁。
+
+基於 [X.I.U 的 AutoPager](https://github.com/XIU2/UserScript) 重寫，移除外部 CDN 依賴，改為純本地規則管理。
+
+## 功能特色
+
+- **3 種翻頁模式** — XHR 靜態加載、按鈕自動點擊、iframe 提取
+- **規則驅動** — 內建 ~16 條規則，支援自定義 JSON 規則覆蓋/擴充
+- **純本地管理** — 無外部 CDN、無遠端規則更新、無 @connect 依賴
+- **頁碼按鈕** — 左下角浮動頁碼，點擊暫停翻頁，右鍵回到頂部
+- **SPA 支援** — 自動偵測 URL 變化，重新匹配規則
+
+## 安裝
+
+1. 安裝 [Tampermonkey](https://www.tampermonkey.net/)（Chrome / Brave / Firefox / Edge）
+2. 點擊 [MyAutoPager.user.js](../../raw/main/MyAutoPager.user.js) 安裝腳本
+3. 完成，瀏覽支援的網站時會自動翻頁
+
+## 內建規則
+
+| 分類 | 網站 |
+|------|------|
+| 個人 | look.thisiscm.com (稷下書院)、uukanshu、69shuba |
+| 搜尋引擎 | Google、Bing、Baidu、Sogou、DuckDuckGo |
+| CMS 模板 | WordPress（列表/文章）、Discuz!（列表/帖子） |
+| 常用站點 | 知乎、GitHub、GreasyFork、StackOverflow、V2EX |
+
+## 自定義規則
+
+透過 Tampermonkey 菜單 → **「自定義翻頁規則」** 開啟 JSON 編輯器。
+
+### 規則格式
+
+```json
+{
+    "規則名稱": {
+        "host": "domain.com",
+        "url": "/正則表達式/",
+        "pager": {
+            "type": 1,
+            "nextL": "下一頁連結的 CSS/XPath 選擇器",
+            "pageE": "要提取的內容元素",
+            "replaceE": "要替換的導航元素",
+            "scrollD": 2000
+        }
+    }
+}
+```
+
+### 翻頁模式
+
+| type | 說明 | 使用場景 |
+|------|------|---------|
+| 1 | XHR 靜態加載（預設） | 大部分網站 |
+| 2 | 自動點擊按鈕 | 有「載入更多」按鈕的網站 |
+| 6 | iframe 提取 | 重度客戶端渲染的網站 |
+
+### 規則欄位
+
+| 欄位 | 說明 |
+|------|------|
+| `host` | 域名匹配：字串精確匹配、陣列多值、`"/regex/"` 正則 |
+| `url` | URL 路徑匹配（可選）：`"/regex/"` 或 JavaScript 函數字串 |
+| `nextL` | 下一頁連結定位：CSS 選擇器、XPath、`js;程式碼` |
+| `pageE` | 要提取的內容元素選擇器 |
+| `insertP` | 插入位置 `["selector", 1-6]`，預設為 pageE 最後一個元素之後 |
+| `replaceE` | 要替換的元素（通常是頁碼導航） |
+| `scrollD` | 觸發距離（px），預設 2000 |
+| `scrollE` | 基準元素選擇器（改用距元素距離觸發） |
+| `style` | 注入的 CSS（無 `{}` 時自動加 `display:none!important`） |
+| `history` | 是否更新瀏覽器歷史記錄 |
+| `retry` | 失敗後重試延遲（ms） |
+
+### 鉤子函數
+
+```json
+{
+    "function": {
+        "bF": "插入前執行的程式碼（可修改 pageE）",
+        "aF": "插入後執行的程式碼"
+    }
+}
+```
+
+### 繼承內建規則
+
+自定義規則名稱與內建規則同名時，加 `"inherits": true` 可深度合併而非完全覆蓋：
+
+```json
+{
+    "google": {
+        "inherits": true,
+        "pager": {
+            "scrollD": 5000
+        }
+    }
+}
+```
+
+## 菜單功能
+
+| 功能 | 說明 |
+|------|------|
+| 啟用/禁用 | 對當前網站開關腳本 |
+| 顯示頁碼 | 左下角浮動頁碼按鈕 |
+| 歷史記錄 | 翻頁時更新瀏覽器 URL 和標題 |
+| 自定義翻頁規則 | 開啟 JSON 規則編輯器 |
+
+## 與原版差異
+
+| 項目 | 原版 AutoPager | MyAutoPager |
+|------|---------------|-------------|
+| 翻頁模式 | 6 種 | 3 種 |
+| 規則來源 | 內建 + CDN 外置 + 自定義 | 內建 + 自定義 |
+| 外部依賴 | 30+ CDN/代理域名 | 無 |
+| 內建規則 | 200+ 條 | ~16 條 |
+| 程式碼量 | ~3000 行 | ~1670 行 |
+
+## 授權
+
+GPL-3.0 — 基於 [X.I.U 的 AutoPager](https://github.com/XIU2/UserScript)（GPL-3.0）衍生開發。
