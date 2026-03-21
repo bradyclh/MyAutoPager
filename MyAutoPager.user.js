@@ -315,6 +315,9 @@
                     pageE: '.chapter-content',
                     replaceE: '.foot-nav',
                     scrollD: 3000
+                },
+                function: {
+                    aF: "var first = document.querySelector('.chapter-content .content'); if (first && first.style.fontSize) { var all = document.querySelectorAll('.chapter-content .content'); for (var i = 1; i < all.length; i++) { all[i].style.fontSize = first.style.fontSize; } }"
                 }
             },
             uukanshu: {
