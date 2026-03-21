@@ -1,16 +1,22 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.0.0
+// @version      1.1.0
 // @author       clh (based on AutoPager by X.I.U)
-// @description  iPhone Safari 小說自動翻頁 — 無 GM API 依賴
+// @description  iPhone Safari 小說自動翻頁 — 支援 Safari Userscripts App
 // @copyright    Original AutoPager (c) X.I.U (https://github.com/XIU2/UserScript) GPL-3.0
 // @license      GPL-3.0
+// @inject-into  content
 // @run-at       document-end
+// @weight       999
+// @grant        GM_xmlhttpRequest
+// @grant        GM.getValue
+// @grant        GM.setValue
 // @match        *://look.thisiscm.com/*
 // @match        *://uukanshu.cc/*
 // @match        *://*.uukanshu.cc/*
 // @match        *://69shuba.tw/*
 // @match        *://*.69shuba.tw/*
+// @noframes
 // ==/UserScript==
 
 (function() {
@@ -18,110 +24,86 @@
 
     // ========== DOM 選擇器 ==========
 
-    function getCSS(css, contextNode = document) {
-        return contextNode.querySelector(css);
-    }
-    function getAllCSS(css, contextNode = document) {
-        return [].slice.call(contextNode.querySelectorAll(css));
-    }
-    function getXpath(xpath, contextNode, doc = document) {
-        contextNode = contextNode || doc;
+    function getCSS(css, ctx) { return (ctx || document).querySelector(css); }
+    function getAllCSS(css, ctx) { return [].slice.call((ctx || document).querySelectorAll(css)); }
+
+    function getXpath(xpath, ctx, doc) {
+        doc = doc || document; ctx = ctx || doc;
         try {
-            var result = doc.evaluate(xpath, contextNode, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-            return result.singleNodeValue && result.singleNodeValue.nodeType === 1 && result.singleNodeValue;
-        } catch (err) { return null; }
+            var r = doc.evaluate(xpath, ctx, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+            return r.singleNodeValue && r.singleNodeValue.nodeType === 1 && r.singleNodeValue;
+        } catch (e) { return null; }
     }
-    function getAllXpath(xpath, contextNode, doc = document) {
-        contextNode = contextNode || doc;
+
+    function getAllXpath(xpath, ctx, doc) {
+        doc = doc || document; ctx = ctx || doc;
         var result = [];
         try {
-            var query = doc.evaluate(xpath, contextNode, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-            for (var i = 0; i < query.snapshotLength; i++) {
-                var node = query.snapshotItem(i);
-                if (node.nodeType === 1) result.push(node);
+            var q = doc.evaluate(xpath, ctx, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+            for (var i = 0; i < q.snapshotLength; i++) {
+                var n = q.snapshotItem(i);
+                if (n.nodeType === 1) result.push(n);
             }
-        } catch (err) {}
+        } catch (e) {}
         return result;
     }
-    function getOne(selector, contextNode, doc) {
-        if (!selector) return;
-        doc = doc || document;
-        contextNode = contextNode || doc;
-        if (selector[0] === '/' || selector.slice(0,2) === './' || selector.slice(0,2) === '(/' || selector.slice(0,3) === 'id(') {
-            return getXpath(selector, contextNode, doc);
-        }
-        return getCSS(selector, contextNode);
+
+    function getOne(s, ctx, doc) {
+        if (!s) return;
+        doc = doc || document; ctx = ctx || doc;
+        return (s[0] === '/' || s.slice(0,2) === './' || s.slice(0,2) === '(/' || s.slice(0,3) === 'id(')
+            ? getXpath(s, ctx, doc) : getCSS(s, ctx);
     }
-    function getAll(selector, contextNode, doc) {
-        if (!selector) return [];
-        doc = doc || document;
-        contextNode = contextNode || doc;
-        if (selector[0] === '/' || selector.slice(0,2) === './' || selector.slice(0,2) === '(/' || selector.slice(0,3) === 'id(') {
-            return getAllXpath(selector, contextNode, doc);
-        }
-        return getAllCSS(selector, contextNode);
-    }
-    function getAllParentElement(selector, contextNode, doc) {
-        doc = doc || document;
-        contextNode = contextNode || doc;
-        var parents = [];
-        getAll(selector, contextNode, doc).forEach(function(next) {
-            var parent = next.parentElement;
-            if (parents.indexOf(parent) === -1) parents.push(parent);
-        });
-        return parents;
+
+    function getAll(s, ctx, doc) {
+        if (!s) return [];
+        doc = doc || document; ctx = ctx || doc;
+        return (s[0] === '/' || s.slice(0,2) === './' || s.slice(0,2) === '(/' || s.slice(0,3) === 'id(')
+            ? getAllXpath(s, ctx, doc) : getAllCSS(s, ctx);
     }
 
     // ========== 工具函數 ==========
 
-    function createDocumentByString(e) {
-        if (!e) return;
-        try { return (new DOMParser()).parseFromString(e, 'text/html'); } catch(ex) {}
-        if (document.implementation.createHTMLDocument) {
-            var t = document.implementation.createHTMLDocument('');
-            var r = document.createRange();
-            var n = r.createContextualFragment(e);
-            r.selectNodeContents(document.body);
-            t.body.appendChild(n);
-            return t;
-        }
+    function createDoc(html) {
+        if (!html) return;
+        try { return (new DOMParser()).parseFromString(html, 'text/html'); } catch (e) {}
+        var t = document.implementation.createHTMLDocument('');
+        t.body.innerHTML = html;
+        return t;
     }
 
-    function insStyle(style) {
-        if (style.indexOf('{') === -1) style += '{display: none !important;}';
-        document.documentElement.appendChild(document.createElement('style')).textContent = style;
-    }
-
-    function getAddTo(num) {
-        switch (num) {
-            case 1: return 'beforebegin';
-            case 2: return 'afterbegin';
-            case 3: case 6: return 'beforeend';
-            case 4: case 5: return 'afterend';
-        }
+    function insStyle(css) {
+        if (css.indexOf('{') === -1) css += '{display:none!important}';
+        document.documentElement.appendChild(document.createElement('style')).textContent = css;
     }
 
     function toE5pop(a) {
-        if (a.length === 0) return;
+        if (!a.length) return;
         var b = a.pop();
-        if (b.tagName === 'SCRIPT' || b.tagName === 'STYLE' || b.tagName === 'LINK') return toE5pop(a);
-        return b;
+        return (b.tagName === 'SCRIPT' || b.tagName === 'STYLE' || b.tagName === 'LINK') ? toE5pop(a) : b;
     }
 
     // ========== 清除非文字內容 ==========
 
-    function cleanContent(pageE) {
-        var removeList = 'iframe, img, script, style, link, ins, noscript, ad, video, audio, canvas, svg, object, embed, form, input, button, select, textarea';
-        pageE.forEach(function(el) {
-            el.querySelectorAll(removeList).forEach(function(node) { node.remove(); });
+    var REMOVE_TAGS = 'iframe,img,script,style,link,ins,noscript,ad,video,audio,canvas,svg,object,embed,form,input,button,select,textarea';
+    var PROMO_KEYWORDS = ['溫馨提示', 'VIP', '免廣告', '加入書架', '搜書名'];
+    var AD_CLASS_RE = /\b(gadBlock|clickforce|cfad|ad[-_]?wrap)/i;
+
+    function cleanContent(elements) {
+        elements.forEach(function(el) {
+            el.querySelectorAll(REMOVE_TAGS).forEach(function(n) { n.remove(); });
             el.querySelectorAll('div, p').forEach(function(node) {
-                if (node.className && /\b(gadBlock|clickforce|cfad|ad[-_]?wrap)/i.test(node.className)) { node.remove(); return; }
+                if (node.className && AD_CLASS_RE.test(node.className)) { node.remove(); return; }
                 var txt = node.textContent.trim();
                 if (!txt && node.children.length === 0) { node.remove(); return; }
-                if (txt.length < 200 && (txt.indexOf('溫馨提示') > -1 || txt.indexOf('VIP') > -1 || txt.indexOf('免廣告') > -1 || txt.indexOf('加入書架') > -1 || txt.indexOf('搜書名') > -1)) { node.remove(); return; }
+                if (txt.length < 200) {
+                    for (var i = 0; i < PROMO_KEYWORDS.length; i++) {
+                        if (txt.indexOf(PROMO_KEYWORDS[i]) > -1) { node.remove(); return; }
+                    }
+                }
             });
         });
-        return pageE;
+        return elements;
     }
 
     // ========== 小說規則 ==========
@@ -130,13 +112,8 @@
         novel543: {
             host: 'look.thisiscm.com',
             url: /\d+_\d+/,
-            style: 'ins.clickforceads, iframe.cfadif, div[id*="tam-ad"], div[id*="cfad"], ad {display: none !important;}',
-            pager: {
-                nextL: '(//a[contains(text(),"下一章")])[last()]',
-                pageE: '.chapter-content',
-                replaceE: '.foot-nav',
-                scrollD: 3000
-            },
+            style: 'ins.clickforceads, iframe.cfadif, div[id*="tam-ad"], div[id*="cfad"], ad {display:none!important}',
+            pager: { nextL: '(//a[contains(text(),"下一章")])[last()]', pageE: '.chapter-content', replaceE: '.foot-nav', scrollD: 3000 },
             afterPage: function() {
                 var first = document.querySelector('.chapter-content .content');
                 if (first && first.style.fontSize) {
@@ -149,12 +126,7 @@
         uukanshu: {
             host: 'uukanshu.cc',
             style: '.▶, iframe[src*="political-effort"], script[src*="political-effort"], script[src*="grown-mouth"]',
-            pager: {
-                nextL: '#linkNext',
-                pageE: '.readcotent',
-                replaceE: '.mulu-box',
-                scrollD: 3000
-            },
+            pager: { nextL: '#linkNext', pageE: '.readcotent', replaceE: '.mulu-box', scrollD: 3000 },
             afterPage: function() {
                 var els = document.querySelectorAll('.readcotent');
                 if (els.length > 1) els[els.length - 1].className = els[0].className;
@@ -162,13 +134,8 @@
         },
         '69shuba': {
             host: '69shuba.tw',
-            style: 'div[id*="pf-"], script[src*="novelapis"], script[src*="pubfuture"], .ad, iframe {display: none !important;} #nr1, #nr1 * {text-align: center !important; font-size: 36px !important; line-height: 1.8 !important; color: #999 !important;} .nr_title {text-align: center !important; font-size: 24px !important; color: #ddd !important; display: block !important; margin: 20px 0 !important;}',
-            pager: {
-                nextL: '#pb_next',
-                pageE: '.nr_title, .nr_nr',
-                replaceE: '.nr_page',
-                scrollD: 3000
-            }
+            style: 'div[id*="pf-"], script[src*="novelapis"], script[src*="pubfuture"], .ad, iframe {display:none!important} #nr1, #nr1 * {text-align:center!important; font-size:36px!important; line-height:1.8!important; color:#999!important} .nr_title {text-align:center!important; font-size:24px!important; color:#ddd!important; display:block!important; margin:20px 0!important}',
+            pager: { nextL: '#pb_next', pageE: '.nr_title, .nr_nr', replaceE: '.nr_page', scrollD: 3000 }
         }
     };
 
@@ -179,71 +146,93 @@
     var pageNum = 1;
 
     function matchRule() {
-        var hostname = location.hostname;
-        var pathSearch = location.pathname + location.search;
-
+        var host = location.hostname;
+        var path = location.pathname + location.search;
         for (var key in rules) {
             var rule = rules[key];
-            // host 匹配
-            if (hostname !== rule.host && hostname.indexOf('.' + rule.host) === -1) continue;
-            // url 匹配（可選）
-            if (rule.url && !rule.url.test(pathSearch)) continue;
-
+            if (host !== rule.host && host.indexOf('.' + rule.host) === -1) continue;
+            if (rule.url && !rule.url.test(path)) continue;
             curSite = rule;
             curSite.pageUrl = '';
-            console.info('[MyAutoPager-iPhone] 匹配規則:', key);
+            console.info('[MyAutoPager] 匹配:', key);
             return;
         }
+    }
+
+    // ========== 禁用管理（GM.getValue/setValue） ==========
+
+    var disabledKey = 'disabled_' + location.hostname;
+
+    async function isDisabled() {
+        try { return await GM.getValue(disabledKey, false); } catch (e) { return false; }
+    }
+
+    async function toggleDisable() {
+        try {
+            var current = await GM.getValue(disabledKey, false);
+            await GM.setValue(disabledKey, !current);
+            location.reload();
+        } catch (e) {}
     }
 
     // ========== 翻頁引擎 ==========
 
     function getNextUrl() {
-        var nextL = curSite.pager.nextL;
-        var next = getOne(nextL);
-        if (!next || !next.href || next.href.slice(0, 4) !== 'http' || next.getAttribute('href')[0] === '#') return '';
-        if (next.href === curSite.pageUrl) return '';
-        return next.href;
+        var next = getOne(curSite.pager.nextL);
+        if (!next || !next.href || next.href.slice(0, 4) !== 'http') return '';
+        if (next.getAttribute('href')[0] === '#') return '';
+        return next.href === curSite.pageUrl ? '' : next.href;
     }
 
     function fetchNextPage(url) {
         curSite.pageUrl = url;
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', url, true);
-        xhr.overrideMimeType('text/html; charset=' + (document.characterSet || 'utf-8'));
-        xhr.timeout = 8000;
-        xhr.onload = function() {
-            try {
-                processElements(createDocumentByString(xhr.responseText));
-            } catch (e) {
-                console.error('[MyAutoPager-iPhone] 處理錯誤:', e);
-            }
-        };
-        xhr.onerror = function() { console.log('[MyAutoPager-iPhone] 載入失敗:', url); };
-        xhr.ontimeout = function() {
-            curSite.pageUrl = '';
-            console.log('[MyAutoPager-iPhone] 載入超時:', url);
-        };
-        xhr.send();
+
+        // 優先使用 GM_xmlhttpRequest（更好的 cookie 處理）
+        if (typeof GM_xmlhttpRequest === 'function') {
+            GM_xmlhttpRequest({
+                url: url,
+                method: 'GET',
+                responseType: 'arraybuffer',
+                headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml' },
+                timeout: 8000,
+                onload: function(resp) {
+                    try {
+                        var charset = document.characterSet || 'utf-8';
+                        var html = new TextDecoder(charset).decode(resp.response);
+                        processElements(createDoc(html));
+                    } catch (e) { console.error('[MyAutoPager] 處理錯誤:', e); }
+                },
+                onerror: function() { console.log('[MyAutoPager] 載入失敗:', url); },
+                ontimeout: function() { curSite.pageUrl = ''; }
+            });
+        } else {
+            // 回退到原生 XMLHttpRequest（同域名可用）
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', url, true);
+            xhr.overrideMimeType('text/html; charset=' + (document.characterSet || 'utf-8'));
+            xhr.timeout = 8000;
+            xhr.onload = function() {
+                try { processElements(createDoc(xhr.responseText)); }
+                catch (e) { console.error('[MyAutoPager] 處理錯誤:', e); }
+            };
+            xhr.onerror = function() { console.log('[MyAutoPager] 載入失敗:', url); };
+            xhr.ontimeout = function() { curSite.pageUrl = ''; };
+            xhr.send();
+        }
     }
 
     function processElements(response) {
         var insertP = curSite.pager.insertP || [curSite.pager.pageE, 5];
         var pageE = getAll(curSite.pager.pageE, response, response);
-        var toE;
-
-        if (insertP[1] === 5) {
-            toE = toE5pop(getAll(insertP[0]));
-        } else {
-            toE = getOne(insertP[0]);
-        }
+        var toE = (insertP[1] === 5) ? toE5pop(getAll(insertP[0])) : getOne(insertP[0]);
 
         if (pageE.length > 0 && toE) {
-            // 清理非文字內容
             cleanContent(pageE);
 
-            // 插入
-            var addTo = getAddTo(insertP[1]);
+            var addTo = (function(n) {
+                switch(n) { case 1: return 'beforebegin'; case 2: return 'afterbegin'; case 3: case 6: return 'beforeend'; default: return 'afterend'; }
+            })(insertP[1]);
+
             if (insertP[1] === 6) {
                 var html = '';
                 pageE.forEach(function(one) { html += one.innerHTML; });
@@ -253,19 +242,18 @@
                 pageE.forEach(function(one) { toE.insertAdjacentElement(addTo, one); });
             }
 
-            // 頁碼 +1
             pageNum++;
             updatePageNumber();
 
-            // 歷史記錄
+            // 更新瀏覽器歷史
             try {
-                var title = response.querySelector('title');
-                title = title ? title.textContent : document.title;
-                history.pushState(null, title, url);
+                var titleEl = response.querySelector('title');
+                var title = titleEl ? titleEl.textContent : document.title;
+                history.pushState(null, title, curSite.pageUrl);
                 document.title = title;
-            } catch(e) {}
+            } catch (e) {}
 
-            // 替換導航元素
+            // 替換導航
             if (curSite.pager.replaceE) {
                 var oldE = getAll(curSite.pager.replaceE);
                 var newE = getAll(curSite.pager.replaceE, response, response);
@@ -274,53 +262,66 @@
                 }
             }
 
-            // 清理所有已載入章節
+            // 清理所有章節（含原始頁）
             cleanContent(getAll(curSite.pager.pageE));
 
-            // 執行 afterPage 鉤子
             if (curSite.afterPage) curSite.afterPage();
-
         } else if (curSite.pager.retry) {
             setTimeout(function() { curSite.pageUrl = ''; }, curSite.pager.retry);
         }
     }
 
-    // ========== 頁碼按鈕 ==========
+    // ========== 頁碼按鈕（觸控優化） ==========
 
     var pageNumBtn = null;
 
     function createPageNumber() {
         var host = document.createElement('div');
         host.id = 'Autopage_number';
-        host.style.cssText = 'display:flex!important;position:fixed!important;z-index:9999998!important;';
+        host.style.cssText = 'display:flex!important;position:fixed!important;z-index:9999998!important';
         document.documentElement.appendChild(host);
 
         var shadow = host.attachShadow({ mode: 'open' });
-        shadow.innerHTML = '<style>' +
-            '#btn{top:calc(75vh);left:0;width:32px;height:32px;padding:6px;display:flex;position:fixed;' +
-            'opacity:0.3;transition:.2s;z-index:9999998;cursor:pointer;user-select:none;flex-direction:column;' +
-            'align-items:center;justify-content:center;box-sizing:content-box;border-radius:0 50% 50% 0;' +
-            'transform-origin:center;transform:translateX(-8px);background-color:#eee;' +
-            '-webkit-tap-highlight-color:transparent;box-shadow:1px 1px 3px 0px #aaa;color:#000;' +
-            'font-size:medium;font-family:system-ui;}' +
-            '#btn:active{opacity:0.8;transform:translateX(0);}' +
-            '</style><div id="btn">1</div>';
+        shadow.innerHTML =
+            '<style>' +
+            '#btn{' +
+                'top:calc(80vh);left:0;' +
+                'width:36px;height:36px;padding:8px;' +
+                'display:flex;position:fixed;' +
+                'opacity:0.4;transition:.2s;z-index:9999998;' +
+                'cursor:pointer;user-select:none;' +
+                'flex-direction:column;align-items:center;justify-content:center;' +
+                'box-sizing:content-box;border-radius:0 50% 50% 0;' +
+                'transform-origin:center;transform:translateX(-10px);' +
+                'background-color:#eee;' +
+                '-webkit-tap-highlight-color:transparent;' +
+                'box-shadow:1px 1px 3px 0px #aaa;' +
+                'color:#000;font-size:16px;font-family:system-ui;' +
+                'touch-action:manipulation;' +
+            '}' +
+            '#btn:active{opacity:0.9;transform:translateX(0)}' +
+            '</style>' +
+            '<div id="btn" role="button" aria-label="頁碼/暫停翻頁">1</div>';
 
         pageNumBtn = shadow.querySelector('#btn');
 
-        // 點擊暫停/恢復
         pageNumBtn.addEventListener('click', function(e) {
-            if (pausePage) {
-                this.style.color = '#FF5722';
-                this.style.fontStyle = 'italic';
-            } else {
-                this.style.color = '';
-                this.style.fontStyle = '';
-            }
             pausePage = !pausePage;
+            this.style.color = pausePage ? '' : '#FF5722';
+            this.style.fontStyle = pausePage ? '' : 'italic';
             e.preventDefault();
             e.stopPropagation();
         });
+
+        // 長按可禁用當前網站
+        var holdTimer = null;
+        pageNumBtn.addEventListener('touchstart', function() {
+            holdTimer = setTimeout(function() {
+                if (confirm('要對 ' + location.hostname + ' 禁用自動翻頁嗎？')) toggleDisable();
+            }, 1500);
+        });
+        pageNumBtn.addEventListener('touchend', function() { clearTimeout(holdTimer); });
+        pageNumBtn.addEventListener('touchmove', function() { clearTimeout(holdTimer); });
     }
 
     function updatePageNumber() {
@@ -332,34 +333,29 @@
     function startScrollWatch() {
         var scrollD = curSite.pager.scrollD || 2000;
         var interval = curSite.pager.interval || 500;
-        var beforeScrollTop = document.documentElement.scrollTop || document.body.scrollTop;
+        var prevST = 0;
 
-        // 內容太少時撐高頁面
         setTimeout(function() {
-            var st = document.documentElement.scrollTop || document.body.scrollTop;
-            var vh = window.innerHeight || document.documentElement.clientHeight;
-            if (st === 0 && document.documentElement.scrollHeight === vh) {
-                insStyle('html, body {min-height: ' + (document.documentElement.scrollHeight + 10) + 'px;}');
+            // 內容太少時撐高頁面
+            if (document.documentElement.scrollHeight <= window.innerHeight) {
+                insStyle('html,body{min-height:' + (window.innerHeight + 10) + 'px}');
             }
 
             window.addEventListener('scroll', function() {
-                var afterScrollTop = document.documentElement.scrollTop || document.body.scrollTop;
-                var delta = afterScrollTop - beforeScrollTop;
-                beforeScrollTop = afterScrollTop;
-                if (delta <= 0 || !pausePage) return;
+                var st = window.pageYOffset || document.documentElement.scrollTop || 0;
+                if (st <= prevST || !pausePage) { prevST = st; return; }
+                prevST = st;
 
-                var scrollTop = afterScrollTop;
-                var viewHeight = window.innerHeight || document.documentElement.clientHeight;
+                var vh = window.innerHeight;
+                var docH = document.documentElement.scrollHeight;
 
-                if (document.documentElement.scrollHeight <= viewHeight + scrollTop + scrollD) {
-                    // 觸發翻頁
+                if (docH <= vh + st + scrollD) {
                     pausePage = false;
                     setTimeout(function() { pausePage = true; }, interval);
-
                     var url = getNextUrl();
                     if (url) fetchNextPage(url);
                 }
-            }, false);
+            }, { passive: true });
         }, 1000);
     }
 
@@ -368,13 +364,13 @@
     matchRule();
     if (!curSite) return;
 
-    // 注入 CSS
-    if (curSite.style) insStyle(curSite.style);
+    // 檢查是否被禁用
+    isDisabled().then(function(disabled) {
+        if (disabled) { console.info('[MyAutoPager] 已禁用:', location.hostname); return; }
 
-    // 顯示頁碼
-    createPageNumber();
-
-    // 啟動翻頁
-    startScrollWatch();
+        if (curSite.style) insStyle(curSite.style);
+        createPageNumber();
+        startScrollWatch();
+    });
 
 })();
