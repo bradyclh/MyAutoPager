@@ -1226,8 +1226,126 @@
         GM_setValue('menu_disable', list);
     }
 
-    // customRules 將在 Task 7 實作
-    function customRules() { console.log('[MyAutoPager] Rule editor stub - Task 7'); }
+    // 自定義翻頁規則編輯器
+    function customRules() {
+        if (getCSS('#Autopage_customRules')) return
+
+        let customRules = customStringify(GM_getValue('menu_customRules', {}))
+        if (customRules == '{}') customRules = '{\n    \n}'; // 引導用戶插入規則的位置
+        let _html = `<style>* {font-family: system-ui !important;}</style><div style="left: 0; right: 0; top: 0; bottom: 0; width: 100%; height: 100%; margin: auto; padding: 25px 10px 10px 10px; position: fixed; opacity: 0.95; z-index: 9999999; background-color: #eee; color: #222; font-size: 14px; overflow: scroll; text-align: left;-webkit-touch-callout: text !important;-webkit-user-select: text !important;-khtml-user-select: text !important;-moz-user-select: text !important;-ms-user-select: text !important;user-select: text !important;">
+<h3 style="font-size: 22px;overflow: hidden;text-overflow: ellipsis;white-space: nowrap;"><strong># 自定義翻頁規則（優先級最高，會覆蓋同名的外置翻頁規則）-【將規則插入默認的 <code>{ }</code> 中間】</strong></h3>
+<details><summary style="cursor: pointer;overflow: hidden;text-overflow: ellipsis;white-space: nowrap;"><kbd><strong>「 點擊展開 查看規則示例 」</strong></kbd></summary>
+<ul style="list-style: disc; margin-left: 35px;">
+<li>翻頁規則為 JSON 格式，因此需要了解一點 JSON 的基本格式（主要就是末尾逗號、轉義、雙引號等）。</li>
+<li>腳本會自動格式化規則，因此<strong>無需手動縮進、換行</strong>，只需把規則<strong>插入默認的 { } 中間</strong>即可。</li>
+</ul>
+<pre class="notranslate" style="white-space: pre-wrap;user-select: auto;">
+// 規則說明：
+// "規則名"     唯一名稱，自定義規則優先級最高，會覆蓋同名的外置規則
+// "host"       域名，支持正則表達式，也可寫多個域名的陣列
+// "url"        控制哪些頁面適用該規則，省略後代表全站適用
+// "nextL"      含有下一頁地址的元素選擇器（CSS 或 XPath）
+// "pageE"      要從下一頁獲取的元素選擇器（網頁主體內容）
+// "replaceE"   用於替換當前頁碼元素的選擇器，省略後自動判斷
+// "scrollD"    觸發翻頁的滾動條與底部之間的距離，預設 2000
+// "inherits"   繼承標識，僅需修改部分規則時使用
+
+// === 示例一：基本規則（type 1，XHR 模式，預設） ===
+{
+    "example_basic": {
+        "host": "example.com",
+        "url": "return fun.isPager()",
+        "pager": {
+            "nextL": "a.next-page",
+            "pageE": "#content",
+            "replaceE": ".pagination",
+            "scrollD": 2000
+        }
+    },
+
+// === 示例二：繼承規則（僅修改部分內容） ===
+    "example_basic": {
+        "host": "other.example.com",
+        "inherits": true
+    },
+
+// === 示例三：type 2（手動點擊「載入更多」按鈕） ===
+    "example_loadmore": {
+        "host": "forum.example.com",
+        "pager": {
+            "type": 2,
+            "nextL": "#load-more-btn",
+            "pageE": ".post-list"
+        }
+    },
+
+// === 示例四：type 6（拼接 URL 翻頁） ===
+    "example_url": {
+        "host": "blog.example.com",
+        "pager": {
+            "type": 6,
+            "nextL": "js; return location.href.replace(/(page=)(\\d+)/, (m,p1,p2) => p1+(+p2+1))",
+            "pageE": ".article-list"
+        }
+    }
+}
+</pre></details>
+<details><summary style="cursor: pointer;overflow: hidden;text-overflow: ellipsis;white-space: nowrap;"><kbd><strong>「 點擊展開 查看所有規則 」（可按 Ctrl+F 搜索規則）</strong></kbd></summary>
+<pre id="Autopage_customRules_all" class="notranslate" style="overflow-y: scroll; overflow-x: hidden; height: 500px; word-break: break-all; white-space: pre-wrap;user-select: auto;"> </pre></details>
+
+<textarea id="Autopage_customRules_textarea" style="min-width:95%; min-height:70%; display: block; margin: 10px 0 10px 0; white-space:pre; overflow:scroll; resize: revert; text-transform: initial;" placeholder="留空等於默認的 {}，請把規則插入 {} 之間"></textarea>
+<button id="Autopage_customRules_save" style="margin-right: 20px;">保存並刷新</button><button id="Autopage_customRules_cancel">取消修改</button>
+</div>`
+        document.documentElement.insertAdjacentHTML('beforeend', `<div id="Autopage_customRules" style="display: initial !important;position: fixed !important;z-index: 9999999 !important;"></div>`);
+        let Autopage_customRules = getCSS('#Autopage_customRules'), shadowRoot = Autopage_customRules.attachShadow({ mode: 'open' }); // 創建 Shadow DOM 避免網頁樣式影響
+        shadowRoot.innerHTML = _html;
+        document.documentElement.style.overflow = document.body.style.overflow = 'hidden'; // 避免網頁本身滾動
+        getCSS('#Autopage_customRules_textarea', shadowRoot).textContent = customRules; // 單獨插入自定義規則，避免被 insertAdjacentHTML 語義化
+        getCSS('#Autopage_customRules_all', shadowRoot).textContent = customStringify(DBSite2); // 單獨插入全部規則列表
+        // 保存按鈕
+        getCSS('#Autopage_customRules_save', shadowRoot).onclick = function () {
+            let customRules_textarea = getCSS('#Autopage_customRules_textarea', shadowRoot)
+            customRules = customRules_textarea.value;
+            if (!customRules) customRules = '{}'
+            try {
+                customRules = JSON.parse(customRules)
+                GM_setValue('menu_customRules', customRules)
+                location.reload();
+            } catch (e) {
+                let match = e.message.match(/at position (\d+)/), position;
+                if (match) {
+                    position = parseInt(match[1]);
+                } else {
+                    match = e.message.match(/line (\d+) column (\d+)/i);
+                    position = calculatePositionFromLineColumn(customRules, match[1], match[2])
+                }
+                console.error('自定義規則存在格式錯誤：\n' + e.message + '\n錯誤位置為該區域中間：\n------\n' + customRules.slice((position<30)?0:position-30,position+29) + '\n------\n\n常見格式錯誤：\n1. 逗號：每組 { } 中的最後一個值末尾不能加逗號\n2. 轉義：如果正則表達式中含有轉義符 \\ 那就要對其再次轉義為 \\\\\n3. 引號：規則中冒號左右的內容都需要加上雙引號，如果內容中含有雙引號則需要對雙引號轉義（即 \\" 這樣），或改為單引號')
+                window.alert('自定義規則存在格式錯誤：\n' + e.message + '\n錯誤位置為該區域中間：\n------\n' + customRules.slice((position<30)?0:position-30,position+29) + '\n------\n點擊【確定】後腳本會為你定位並選中編輯框中格式錯誤的文字\n\n常見格式錯誤：\n1. 逗號：每組 { } 中的最後一個值末尾不能加逗號\n2. 轉義：如果正則表達式中含有轉義符 \\ 那就要對其再次轉義為 \\\\\n3. 引號：規則中冒號左右的內容都需要加上雙引號，如果內容中含有雙引號則需要對雙引號轉義（即 \\" 這樣），或改為單引號');
+                customRules_textarea.selectionStart = position - 1;
+                customRules_textarea.selectionEnd = position;
+                customRules_textarea.focus();
+            }
+        }
+        // 取消按鈕
+        getCSS('#Autopage_customRules_cancel', shadowRoot).onclick = function () { document.documentElement.style.overflow = document.body.style.overflow = ''; getCSS('#Autopage_customRules').remove(); }
+    }
+
+    // 自定義的 stringify 函數，將 [ ] 內的元素格式化為一行顯示
+    function customStringify(obj) {
+        return JSON.stringify(obj, null, 4).replace(/(: \[)([\s\S]*?)(\],?\n)/g, (match, p1, p2, p3) => {
+            return p1 + p2.replace(/\n/g, '').replace(/\s{4}/g, '') + p3;
+        });
+    }
+
+    // 根據行號和列號計算字串中的 position 位置
+    function calculatePositionFromLineColumn(text, line, column) {
+        if (!text || line < 1 || column < 1) return -1;
+        const lines = text.split('\n');
+        if (line > lines.length) return -1;
+        let position = 0;
+        for (let i = 0; i < line - 1; i++) position += lines[i].length + 1;
+        return position + Math.min(column - 1, lines[line - 1].length);
+    }
 
     // ========== 後續 Task 將在此添加 ==========
 
