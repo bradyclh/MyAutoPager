@@ -310,6 +310,7 @@
             novel543: {
                 host: 'look.thisiscm.com',
                 url: "/\\d+_\\d+/",
+                style: 'ins.clickforceads, iframe.cfadif, div[id*="tam-ad"], div[id*="cfad"], ad {display: none !important;}',
                 history: true,
                 pager: {
                     nextL: '(//a[contains(text(),"下一章")])[last()]',
@@ -319,7 +320,7 @@
                 },
                 function: {
                     bF: function(pageE) { return cleanContent(pageE); },
-                    aF: "var first = document.querySelector('.chapter-content .content'); if (first && first.style.fontSize) { var all = document.querySelectorAll('.chapter-content .content'); for (var i = 1; i < all.length; i++) { all[i].style.fontSize = first.style.fontSize; } }"
+                    aF: "var rm = 'iframe, img, script, style:not(head style), ins, noscript, ad, video, audio, canvas, svg, object, embed, form, input, button, select, textarea'; document.querySelectorAll('.chapter-content').forEach(function(c) { c.querySelectorAll(rm).forEach(function(n) { n.remove(); }); }); var first = document.querySelector('.chapter-content .content'); if (first && first.style.fontSize) { var all = document.querySelectorAll('.chapter-content .content'); for (var i = 1; i < all.length; i++) { all[i].style.fontSize = first.style.fontSize; } }"
                 }
             },
             uukanshu: {
