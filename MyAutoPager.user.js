@@ -320,7 +320,7 @@
                 },
                 function: {
                     bF: function(pageE) { return cleanContent(pageE); },
-                    aF: "var rm = 'iframe, img, script, style:not(head style), ins, noscript, ad, video, audio, canvas, svg, object, embed, form, input, button, select, textarea'; document.querySelectorAll('.chapter-content').forEach(function(c) { c.querySelectorAll(rm).forEach(function(n) { n.remove(); }); }); var first = document.querySelector('.chapter-content .content'); if (first && first.style.fontSize) { var all = document.querySelectorAll('.chapter-content .content'); for (var i = 1; i < all.length; i++) { all[i].style.fontSize = first.style.fontSize; } }"
+                    aF: function() { cleanContent(getAll('.chapter-content')); var first = document.querySelector('.chapter-content .content'); if (first && first.style.fontSize) { var all = document.querySelectorAll('.chapter-content .content'); for (var i = 1; i < all.length; i++) { all[i].style.fontSize = first.style.fontSize; } } }
                 }
             },
             uukanshu: {
