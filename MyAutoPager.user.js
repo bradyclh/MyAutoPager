@@ -1346,13 +1346,13 @@
             el.querySelectorAll(removeList).forEach(function(node) { node.remove(); });
             // 移除廣告容器、站點推廣文字（div 和 p 都檢查）
             el.querySelectorAll('div, p').forEach(function(node) {
-                var txt = node.textContent.trim();
-                // 移除含推廣關鍵字的元素
-                if (txt.indexOf('溫馨提示') > -1 || txt.indexOf('VIP') > -1 || txt.indexOf('免廣告') > -1 || txt.indexOf('加入書架') > -1 || txt.indexOf('搜書名') > -1) { node.remove(); return; }
                 // 移除廣告容器 class
                 if (node.className && /\b(gadBlock|clickforce|cfad|ad[-_]?wrap)/i.test(node.className)) { node.remove(); return; }
+                var txt = node.textContent.trim();
                 // 移除空元素（無文字、無子元素）
-                if (!txt && node.children.length === 0) node.remove();
+                if (!txt && node.children.length === 0) { node.remove(); return; }
+                // 只對短文字元素檢查推廣關鍵字（避免誤刪包含正文的大容器）
+                if (txt.length < 200 && (txt.indexOf('溫馨提示') > -1 || txt.indexOf('VIP') > -1 || txt.indexOf('免廣告') > -1 || txt.indexOf('加入書架') > -1 || txt.indexOf('搜書名') > -1)) { node.remove(); return; }
             });
         });
         return pageE;
