@@ -290,6 +290,82 @@
         return b;
     }
 
+    // ========== 全域狀態 ==========
+
+    var menuAll = [
+        ['menu_disable', '✅ 已啟用 (點擊對當前網站禁用)', '❌ 已禁用 (點擊對當前網站啟用)', []],
+        ['menu_page_number', '顯示當前頁碼及點擊暫停翻頁', '顯示當前頁碼及點擊暫停翻頁', true],
+        ['menu_history', '添加歷史記錄+修改地址/標題', '添加歷史記錄+修改地址/標題', true],
+        ['menu_customRules', '自定義翻頁規則', '自定義翻頁規則', {}]
+    ];
+    var menuId = [], curSite = {SiteTypeID: 0}, DBSite, DBSite2, DBSiteNow,
+        pausePage = true, pageNum = {now: 1, _now: 1},
+        urlC = false, nowLocation = '', lp = location.pathname;
+
+    // 初始化 GM 存儲
+    for (let i = 0; i < menuAll.length; i++) {
+        if (GM_getValue(menuAll[i][0]) == null) GM_setValue(menuAll[i][0], menuAll[i][3]);
+    }
+
+    function isUrlC() { urlC = true; }
+
+    // ========== 內建規則 ==========
+
+    function setDBSite() {
+        DBSite = {
+            // 規則將在 Task 8 填入
+        };
+    }
+    setDBSite();
+
+    // ========== 規則合併 ==========
+
+    function mergeRules() {
+        let _customRules = GM_getValue('menu_customRules', {});
+        if (Object.prototype.toString.call(_customRules) !== '[object Object]') _customRules = {};
+        let _customKeys = Object.keys(_customRules);
+
+        if (_customKeys.length === 0) {
+            DBSite2 = structuredClone(DBSite);
+        } else {
+            let _builtinKeys = Object.keys(DBSite);
+            for (let i = 0; i < _customKeys.length; i++) {
+                let key = _customKeys[i];
+                if (_builtinKeys.indexOf(key) !== -1) {
+                    if (_customRules[key].inherits === true) {
+                        if (_customRules[key].pager && DBSite[key].pager) {
+                            _customRules[key].pager = Object.assign({}, DBSite[key].pager, _customRules[key].pager);
+                        }
+                        _customRules[key] = Object.assign({}, DBSite[key], _customRules[key]);
+                    }
+                    delete DBSite[key];
+                }
+            }
+            DBSite = Object.assign({}, _customRules, DBSite);
+            DBSite2 = Object.assign({}, structuredClone(_customRules), structuredClone(DBSite));
+        }
+
+        // 生成 SiteTypeID
+        let num = 0;
+        for (let val in DBSite) { DBSite[val].SiteTypeID = ++num; }
+    }
+    mergeRules();
+
+    // ========== 暴露 API ==========
+
+    window.autoPage = {
+        lp: () => location.pathname, indexOF, isMobile, isUrlC,
+        isPager: function() { return false; },
+        isTitle, getAll, getOne, getAllXpath, getXpath, getAllCSS, getCSS,
+        getNextE: function() { return ''; }, getNextEP: function() { return ''; },
+        getNextSP: function() { return ''; }, getNextEPN: function() { return ''; },
+        getNextUPN: function() { return ''; }, getNextUP: function() { return ''; },
+        getNextF: function() { return ''; }, getSearch, getCookie,
+        insStyle, insScript, cleanuEvent: function() {},
+        src_bF: function(p) { return p; }, xs_bF: function(p) { return p; },
+        pageNumIncrement: function() {}
+    };
+
     // ========== 後續 Task 將在此添加 ==========
 
 })();
