@@ -315,13 +315,13 @@
         DBSite = {
             // ---- 個人自訂規則 ----
             novel543: {
-                host: 'www.novel543.com',
-                url: "/\\d+_\\d+\\.html/",
-                style: 'div[id*="tam-ad"] {display: none !important;}',
+                host: 'look.thisiscm.com',
+                url: "/\\d+_\\d+/",
                 history: true,
                 pager: {
                     nextL: '(//a[contains(text(),"下一章")])[last()]',
-                    pageE: 'body > h1, body > p',
+                    pageE: '.chapter-content',
+                    replaceE: '.foot-nav',
                     scrollD: 3000
                 }
             },
