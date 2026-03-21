@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         MyAutoPager
 // @version      1.0.1
-// @author       clh
+// @author       clh (based on AutoPager by X.I.U)
 // @description  自動無縫翻頁 — 將下一頁內容無縫載入至網頁底部
+// @copyright    Original AutoPager (c) X.I.U (https://github.com/XIU2/UserScript) GPL-3.0
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
@@ -15,7 +16,7 @@
 // @grant        GM.info
 // @grant        window.onurlchange
 // @grant        unsafeWindow
-// @license      MIT
+// @license      GPL-3.0
 // @run-at       document-end
 // @exclude      https://*.taobao.com/*
 // @exclude      https://*.tmall.com/*
