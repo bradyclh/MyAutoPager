@@ -534,9 +534,57 @@
     }
 
     // Type 2 按鈕點擊（Task 5 實作）
-    function clickNextButton() { console.log('[MyAutoPager] Type 2 stub'); }
+    function clickNextButton() {
+        let btn = getOne(curSite.pager.nextL);
+        if (!btn) return;
+        if (curSite.pager.isHidden && isHidden(btn)) return;
+        if (curSite.pager.nextText) {
+            if (btn.innerText === curSite.pager.nextText) { btn.click(); pageNumIncrement(); }
+        } else if (curSite.pager.nextTextOf) {
+            if (btn.innerText.indexOf(curSite.pager.nextTextOf) > -1) { btn.click(); pageNumIncrement(); }
+        } else if (curSite.pager.nextHTML) {
+            if (btn.innerHTML === curSite.pager.nextHTML) { btn.click(); pageNumIncrement(); }
+        } else {
+            // 沒指定文字條件，直接點擊
+            pausePage = false;
+            if (curSite.pager.interval) setTimeout(function() { pausePage = true; }, curSite.pager.interval);
+            btn.click(); pageNumIncrement();
+        }
+    }
     // Type 6 iframe 擷取（Task 5 實作）
-    function iframeExtract(url) { console.log('[MyAutoPager] Type 6 stub:', url); }
+    function iframeExtract(src) {
+        if (!pausePage) return;
+        pausePage = false;
+
+        let iframe = document.getElementById('Autopage_iframe');
+        if (!iframe) {
+            iframe = document.createElement('iframe');
+            iframe.id = 'Autopage_iframe';
+            iframe.src = src.replace(/#.+$/, '');
+            insStyle('iframe#Autopage_iframe {position: absolute !important; top: -9999px !important; left: -9999px !important; width: 100% !important; height: 100% !important; border: none !important; z-index: -999 !important;}');
+        }
+
+        iframe.onload = function() {
+            if (!curSite.pager.loadTime) curSite.pager.loadTime = 300;
+            let step = 0, timer = setInterval(function() {
+                let sh = (iframe.contentWindow.document.documentElement.scrollHeight || iframe.contentWindow.document.body.scrollHeight) / 10;
+                iframe.contentWindow.scrollTo(0, 999999);
+                iframe.contentWindow.scrollTo(0, sh * step);
+                if (++step === 12) {
+                    clearInterval(timer);
+                    processElements(iframe.contentWindow.document);
+                    pausePage = true;
+                }
+            }, curSite.pager.loadTime / 10);
+        };
+
+        // 插入或更新 iframe
+        if (document.getElementById('Autopage_iframe')) {
+            iframe.src = src.replace(/#.+$/, '');
+        } else {
+            document.documentElement.appendChild(iframe);
+        }
+    }
     // 強制新分頁開啟連結（Task 8 實作）
     function forceTarget(pageE) { return pageE; }
 
