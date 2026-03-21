@@ -313,7 +313,249 @@
 
     function setDBSite() {
         DBSite = {
-            // 規則將在 Task 8 填入
+            // ---- 個人自訂規則 ----
+            uukanshu: {
+                host: 'uukanshu.cc',
+                style: '.▶, iframe[src*="political-effort"], script[src*="political-effort"], script[src*="grown-mouth"]',
+                history: true, retry: 3000,
+                pager: { nextL: '#linkNext', pageE: '.readcotent', replaceE: '.mulu-box', scrollD: 3000 },
+                function: {
+                    aF: "const els = document.querySelectorAll('.readcotent'); if (els.length > 1) els[els.length - 1].className = els[0].className;"
+                }
+            },
+            '69shuba': {
+                host: '69shuba.tw',
+                style: 'div[id*="pf-"], script[src*="novelapis"], script[src*="pubfuture"], .ad, iframe {display: none !important;} #nr1, #nr1 * {text-align: center !important; font-size: 36px !important; line-height: 1.8 !important; color: #999 !important;} .nr_title {text-align: center !important; font-size: 24px !important; color: #ddd !important; display: block !important; margin: 20px 0 !important;}',
+                history: true, retry: 3000,
+                pager: { nextL: '#pb_next', pageE: '.nr_title, .nr_nr', replaceE: '.nr_page', scrollD: 3000 }
+            },
+
+            // ---- 搜尋引擎 ----
+            google: {
+                host: '/^www\\.google\\./i',
+                url: function() { urlC = true; if (lp === '/search') { curSite = DBSite.google; } },
+                style: '#botstuff',
+                history: true,
+                pager: {
+                    nextL: 'a#pnnext, a[aria-label="Next"], a[aria-label="下一頁"], a[aria-label="下一页"]',
+                    pageE: '#rso > div',
+                    replaceE: '#botstuff'
+                }
+            },
+            "必應搜索": {
+                host: ['www.bing.com', 'cn.bing.com', 'www4.bing.com', 'global.bing.com'],
+                url: function() { urlC = true; if (lp == '/search') { curSite = DBSite["必應搜索"]; if (isMobile()) { curSite.blank = 3; curSite.pager.type = 6; curSite.pager.loadTime = 1500; curSite.pager.scrollD = 3000; } } },
+                style: '#b_footer,.b_msg,#bnp_rich_div,.cn_related_search_upsell_container',
+                history: true,
+                pager: {
+                    nextL: 'a.sb_pagN,a.sb_halfnext,a.sb_fullnpl',
+                    pageE: '#b_results>li.b_algo',
+                    replaceE: '#b_results>.b_pag,#b_PagAboveFooter'
+                },
+                function: {
+                    bF: function(pageE) { pageE.forEach(function (one) { getAllCSS('div.rms_iac[data-src]', one).forEach(function (one1) { one1.outerHTML = '<img src="' + one1.dataset.src + '" height="32" width="32" role="presentation" class="rms_img">'; }); }); return pageE; }
+                }
+            },
+            baidu: {
+                host: 'www.baidu.com',
+                url: function() { if (lp === '/s') { curSite = DBSite.baidu; } },
+                style: '#page, #rs_new, #searchTag',
+                history: true,
+                pager: {
+                    nextL: '#page a.n, a.page-inner_2jZi2+a',
+                    pageE: '#content_left > div.result, #content_left > div.c-container',
+                    replaceE: '#page, #rs_new'
+                }
+            },
+            sogou: {
+                host: 'www.sogou.com',
+                url: function() { if (lp === '/web' || lp === '/sogou') { curSite = DBSite.sogou; } },
+                style: '#pagebar_container',
+                history: true,
+                pager: {
+                    nextL: 'a#sogou_next, a#pager_next, a[id="sogou_next"]',
+                    pageE: '.results .vrwrap, .results .rb',
+                    replaceE: '#pagebar_container'
+                }
+            },
+            duckduckgo: {
+                host: '/^(www\\.)?duckduckgo\\.com$/i',
+                url: function() { if (lp === '/') { curSite = DBSite.duckduckgo; } },
+                pager: {
+                    type: 2,
+                    nextL: 'a[data-testid="next"], button#more-results, a.result--more__btn',
+                    isHidden: true,
+                    interval: 1000
+                }
+            },
+
+            // ---- CMS 通用規則 ----
+            wp_article: {
+                host: '/./i',
+                url: function() {
+                    if (!getCSS('link[href*="/wp-content/" i], script[src*="/wp-content/" i], link[href*="/wp-includes/" i], script[src*="/wp-includes/" i], head>meta[name=generator][content*="WordPress" i]')) return false;
+                    if (!indexOF('/post/') && !getCSS('#comments, .comments-area, #disqus_thread')) {
+                        // 偵測下一頁連結
+                        if (getCSS('a.next, a.next-page')) {
+                            curSite = DBSite.wp_article; curSite.pager.nextL = 'a.next, a.next-page';
+                        } else if (getCSS('a[rel="next" i], a[aria-label="next" i], a[aria-label="Next Page" i], a[aria-label="下一頁"], a[title="下一頁"]')) {
+                            curSite = DBSite.wp_article; curSite.pager.nextL = 'a[rel="next" i], a[aria-label="next" i], a[aria-label="Next Page" i], a[aria-label="下一頁"], a[title="下一頁"]';
+                        } else if (getCSS('li.next-page > a, li.next > a, li.pagination-next>a')) {
+                            curSite = DBSite.wp_article; curSite.pager.nextL = 'li.next-page > a, li.next > a, li.pagination-next>a';
+                        } else if (getCSS('span.current+a')) {
+                            curSite = DBSite.wp_article; curSite.pager.nextL = 'span.current+a';
+                        } else if (getCSS('.nav-previous a, a.nav-previous')) {
+                            curSite = DBSite.wp_article; curSite.pager.nextL = '.nav-previous a, a.nav-previous';
+                        } else {
+                            return false;
+                        }
+                        // 偵測 pageE
+                        if (getAllCSS('article[id^="post-"]').length > 3) {
+                            curSite.pager.pageE = 'article[id^="post-"]';
+                        } else if (getAllCSS('article[class]').length > 3) {
+                            curSite.pager.pageE = 'article[class]';
+                        } else if (getAllCSS('div[id^="post-"]').length > 3) {
+                            curSite.pager.pageE = 'div[id^="post-"]';
+                        } else if (getAllCSS('.post').length > 3) {
+                            curSite.pager.pageE = '.post';
+                        } else {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                },
+                style: 'img[data-src], img[data-original] {opacity: 1 !important;}',
+                blank: 3,
+                pager: {
+                    replaceE: '#nav-below, nav.navigation, nav.paging-navigation, #pagination:not([class*="entry"]), .pagination:not([class*="entry"]), .wp-pagenavi, .pagenavi, nav[role="navigation"], ul[class*="-pagination"]',
+                    forceHTTPS: true,
+                    scrollD: 3000
+                },
+                function: {
+                    bF: src_bF
+                }
+            },
+            wp_article_post: {
+                host: '/./i',
+                url: function() {
+                    if (!getCSS('link[href*="/wp-content/" i], script[src*="/wp-content/" i], link[href*="/wp-includes/" i], script[src*="/wp-includes/" i], head>meta[name=generator][content*="WordPress" i]')) return false;
+                    if (getXpath('(//*[contains(@class, "post-page-numbers") and contains(@class, "current")])[last()]/following-sibling::a[1]')) {
+                        curSite = DBSite.wp_article_post;
+                        curSite.pager.nextL = '(//*[contains(@class, "post-page-numbers") and contains(@class, "current")])[last()]/following-sibling::a[1]';
+                        curSite.pager.replaceE = '//a[contains(@class,"post-page-numbers")]/..';
+                        // 偵測 pageE
+                        if (getAllCSS('.entry-content').length == 1) {
+                            curSite.pager.pageE = '.entry-content>*:not(.page-links):not(.post-links):not(.pagination):not(footer):not([class*=pagination])';
+                        } else if (getAllCSS('.article-content').length == 1) {
+                            curSite.pager.pageE = '.article-content>*:not(.page-links):not(.post-links):not(.pagination):not(footer):not([class*=pagination])';
+                        } else if (getAllCSS('article').length == 1) {
+                            curSite.pager.pageE = 'article>*:not(.page-links):not(.post-links):not(.pagination):not(footer):not([class*=pagination])';
+                        } else {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                },
+                pager: {
+                    type: 3,
+                    scrollD: 3000
+                },
+                function: {
+                    bF: src_bF
+                }
+            },
+            discuz_guide: {
+                host: '/./i',
+                url: function() {
+                    if (!getCSS('head>meta[name="generator" i][content*="Discuz" i]') && !getCSS('body[id="nv_forum"][class^="pg_"]')) return false;
+                    if (getCSS('a.nxt:not([href^="javascript"]), a.next:not([href^="javascript"])') && getCSS('tbody[id^="normalthread_"], tbody[id^="stickthread_"]')) {
+                        curSite = DBSite.discuz_guide;
+                    } else {
+                        return false;
+                    }
+                },
+                pager: {
+                    nextL: 'a.nxt:not([href^="javascript"]) ,a.next:not([href^="javascript"])',
+                    pageE: 'tbody[id^="normalthread_"],tbody[id^="stickthread_"]',
+                    replaceE: '.pg, .pages',
+                    forceHTTPS: true
+                }
+            },
+            discuz_thread: {
+                host: '/./i',
+                url: function() {
+                    if (!getCSS('head>meta[name="generator" i][content*="Discuz" i]') && !getCSS('body[id="nv_forum"][class^="pg_"]')) return false;
+                    if (getCSS('a.nxt:not([href^="javascript"]), a.next:not([href^="javascript"])') && getCSS('#postlist > div[id^="post_"], form>.viewthread')) {
+                        curSite = DBSite.discuz_thread;
+                    } else {
+                        return false;
+                    }
+                },
+                thread: true,
+                style: '.pgbtn, .viewthread:not(:first-of-type)>h1, .viewthread:not(:first-of-type)>ins, .viewthread:not(:first-of-type)>.headactions {display: none;}',
+                pager: {
+                    nextL: 'a.nxt:not([href^="javascript"]) ,a.next:not([href^="javascript"])',
+                    pageE: '#postlist > div[id^="post_"], form>.viewthread',
+                    replaceE: '//div[contains(@class,"pg") or contains(@class,"pages")][./a[contains(@class,"nxt") or contains(@class,"next") or contains(@class,"prev")][not(contains(@href,"javascript") or contains(@href,"commentmore"))]]',
+                    forceHTTPS: true
+                },
+                function: {
+                    bF: src_bF,
+                    bFp: [0, 'img[file]', 'file']
+                }
+            },
+
+            // ---- 常用網站 ----
+            zhihu: {
+                host: 'www.zhihu.com',
+                url: function() { urlC = true; if (indexOF('/search') || indexOF('/topic') || indexOF('/collection')) { curSite = DBSite.zhihu; } },
+                pager: {
+                    type: 2,
+                    nextL: 'button.QuestionMainAction, a[data-za-detail-view-element_name="NextPage"], a[rel="next"]',
+                    isHidden: true,
+                    interval: 1000
+                }
+            },
+            github: {
+                host: 'github.com',
+                url: function() { urlC = true; if (indexOF('/issues') || indexOF('/discussions') || indexOF('/pulls') || indexOF('/search')) { curSite = DBSite.github; } },
+                pager: {
+                    nextL: 'a.next_page, a[rel="next"]',
+                    pageE: 'div[id^="issue_"], div.js-navigation-container > div, div[data-testid="results-list"] > div',
+                    replaceE: '.paginate-container, nav[aria-label="Pagination"]'
+                }
+            },
+            greasyfork: {
+                host: '/^(www\\.)?greasyfork\\.org$/i',
+                url: function() { if (indexOF('/scripts') || indexOF('/users')) { curSite = DBSite.greasyfork; } },
+                blank: 4,
+                pager: {
+                    nextL: 'li.pagination-next > a, a[rel="next"]',
+                    pageE: '#browse-script-list > li, ol.script-list > li',
+                    replaceE: '.pagination'
+                }
+            },
+            stackoverflow: {
+                host: '/stackoverflow\\.com|stackexchange\\.com|superuser\\.com|serverfault\\.com|askubuntu\\.com/i',
+                url: function() { if (indexOF('/questions') || indexOF('/search')) { curSite = DBSite.stackoverflow; } },
+                blank: 4,
+                pager: {
+                    nextL: 'a[rel="next"]',
+                    pageE: '#questions .s-post-summary, .js-search-results .s-post-summary, #question-mini-list .s-post-summary',
+                    replaceE: '.s-pagination'
+                }
+            },
+            v2ex: {
+                host: '/^(www\\.)?v2ex\\.com$/i',
+                url: function() { urlC = true; if (lp === '/' || indexOF('/go/') || indexOF('/recent') || indexOF('/t/')) { curSite = DBSite.v2ex; } },
+                pager: {
+                    nextL: 'a.page_normal:last-of-type, a.page_current+a',
+                    pageE: '.cell.item, div[id^="r_"]',
+                    replaceE: '.cell:last-of-type .page_normal, .cell:last-of-type .page_current'
+                }
+            }
         };
     }
     setDBSite();
@@ -585,8 +827,69 @@
             document.documentElement.appendChild(iframe);
         }
     }
-    // 強制新分頁開啟連結（Task 8 實作）
-    function forceTarget(pageE) { return pageE; }
+    // 強制新分頁開啟連結
+    function forceTarget(pageE) {
+        if (curSite.blank === 1) {
+            // blank 1：在 <head> 插入 <base target="_blank">
+            document.head.appendChild(document.createElement('base')).target = '_blank';
+
+        } else if (curSite.blank === 5 || curSite.blank === 6) {
+            // blank 5/6：克隆 <a> 並加上 target="_blank"（清除事件）
+            if (!pageE) pageE = getAll(curSite.pager.pageE);
+            pageE.forEach(function (dd) {
+                getAllCSS('a[href]:not([target="_blank"]):not([href^="#"]):not([href^="javascript:"])', dd).forEach(function (a) {
+                    if (a.href.slice(0, 4) == 'http') {
+                        const clonedLink = a.cloneNode(true);
+                        clonedLink.target = '_blank';
+                        // blank 6：額外阻止冒泡，避免父元素事件委託捕獲
+                        if (curSite.blank === 6) clonedLink.addEventListener('click', function(e) { e.stopPropagation(); });
+                        a.insertAdjacentElement('afterend', clonedLink);
+                        a.remove();
+                    }
+                });
+            });
+            return pageE;
+
+        } else if (curSite.blank === 4) {
+            // blank 4：直接對 pageE 中的 <a> 加上 target="_blank"
+            if (!pageE) pageE = getAll(curSite.pager.pageE);
+            pageE.forEach(function (dd) {
+                getAllCSS('a[href]:not([target="_blank"]):not([onclick]):not([href^="#"]):not([href^="javascript:"])', dd).forEach(function (a) {
+                    if (a.href.slice(0, 4) == 'http') { a.target = '_blank'; }
+                });
+            });
+            return pageE;
+
+        } else {
+            // blank 2/3：事件委託，攔截 <a> 點擊，透過 GM_openInTab 開啟
+            let d;
+            if (curSite.blank === 2) {
+                d = document.body;
+            } else if (curSite.blank === 3) {
+                let dd = toE5pop(getAll(curSite.pager.pageE));
+                if (dd && dd.parentElement != null) d = dd.parentElement;
+            }
+            if (!d) return;
+
+            function forceTarget_(target, e) {
+                if (target.href && target.target != '_blank' && !(target.getAttribute('onclick')) && target.href.slice(0, 4) == 'http' && target.getAttribute('href').slice(0, 1) != '#') {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    GM_openInTab(target.href, {active: true, insert: true, setParent: true});
+                }
+            }
+            d.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    forceTarget_(e.target, e);
+                } else {
+                    let path = e.path || e.composedPath();
+                    for (let i = 1; i < path.length - 4; i++) {
+                        if (path[i].tagName === 'A') { forceTarget_(path[i], e); break; }
+                    }
+                }
+            });
+        }
+    }
 
     // 檢查下一頁 URL 並呼叫回呼函數
     function checkURL(func) {
@@ -1347,6 +1650,75 @@
         return position + Math.min(column - 1, lines[line - 1].length);
     }
 
-    // ========== 後續 Task 將在此添加 ==========
+    // ========== SPA 支援 ==========
+
+    function addUrlChangeEvent() {
+        history.pushState = (f => function pushState() {
+            var ret = f.apply(this, arguments);
+            window.dispatchEvent(new Event('pushstate'));
+            window.dispatchEvent(new Event('urlchange'));
+            return ret;
+        })(history.pushState);
+
+        history.replaceState = (f => function replaceState() {
+            var ret = f.apply(this, arguments);
+            window.dispatchEvent(new Event('replacestate'));
+            window.dispatchEvent(new Event('urlchange'));
+            return ret;
+        })(history.replaceState);
+
+        window.addEventListener('popstate', () => {
+            window.dispatchEvent(new Event('urlchange'));
+        });
+    }
+
+    // ========== 初始化 ==========
+
+    // 匹配規則
+    matchRule();
+
+    // 註冊菜單
+    registerMenuCommand();
+
+    // 顯示頁碼
+    if (GM_getValue('menu_page_number')) { pageNumber('add'); } else { pageNumber('set'); }
+
+    // 強制新分頁
+    if (curSite.blank !== undefined) setTimeout(forceTarget, 1000);
+
+    // 注入 CSS
+    if (curSite.style) insStyle(curSite.style);
+
+    // 啟動翻頁
+    pageLoading();
+
+    // SPA/PJAX 支援
+    if (urlC) {
+        nowLocation = location.href;
+        if (window.onurlchange === undefined) addUrlChangeEvent();
+
+        window.addEventListener('urlchange', function() {
+            lp = location.pathname;
+            if (curSite.history !== false && window.top.document.Autopage_nowUrl === location.href) {
+                nowLocation = location.href; return;
+            }
+            if (nowLocation === location.href) return;
+
+            nowLocation = location.href;
+            curSite = {SiteTypeID: 0};
+            pageNum.now = 1;
+
+            setDBSite();
+            mergeRules();
+            matchRule();
+            registerMenuCommand();
+
+            if (curSite.blank !== undefined) setTimeout(forceTarget, 1000);
+            if (curSite.style) insStyle(curSite.style);
+            if (GM_getValue('menu_page_number')) { pageNumber('add'); } else { pageNumber('set'); }
+
+            pageLoading();
+        });
+    }
 
 })();
