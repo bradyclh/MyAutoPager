@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.0.0
+// @version      1.0.1
 // @author       clh
 // @description  自動無縫翻頁 — 將下一頁內容無縫載入至網頁底部
 // @match        *://*/*
@@ -15,7 +15,6 @@
 // @grant        GM.info
 // @grant        window.onurlchange
 // @grant        unsafeWindow
-// @sandbox      JavaScript
 // @license      MIT
 // @run-at       document-end
 // @exclude      https://*.taobao.com/*
@@ -56,21 +55,14 @@
 (function() {
     'use strict';
 
+
     // ========== 相容性 polyfill ==========
 
     // 相容不支援 GM_openInTab 的使用者腳本管理器
-    if (typeof GM_openInTab !== 'function') {
-        GM_openInTab = function(url) {
-            window.open(url);
-        };
+    if (typeof GM_openInTab === 'undefined') {
+        window.GM_openInTab = function(url) { window.open(url); };
     }
 
-    // 相容不支援 structuredClone 的瀏覽器（Chromium 98 以下）
-    if (typeof structuredClone !== 'function') {
-        structuredClone = function(obj) {
-            return JSON.parse(JSON.stringify(obj));
-        };
-    }
 
     // ========== DOM 選擇器 ==========
 
@@ -579,7 +571,7 @@
         let _customKeys = Object.keys(_customRules);
 
         if (_customKeys.length === 0) {
-            DBSite2 = structuredClone(DBSite);
+            DBSite2 = JSON.parse(JSON.stringify(DBSite));
         } else {
             let _builtinKeys = Object.keys(DBSite);
             for (let i = 0; i < _customKeys.length; i++) {
@@ -595,7 +587,7 @@
                 }
             }
             DBSite = Object.assign({}, _customRules, DBSite);
-            DBSite2 = Object.assign({}, structuredClone(_customRules), structuredClone(DBSite));
+            DBSite2 = Object.assign({}, JSON.parse(JSON.stringify(_customRules)), JSON.parse(JSON.stringify(DBSite)));
         }
 
         // 生成 SiteTypeID
