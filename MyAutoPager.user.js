@@ -366,6 +366,101 @@
         pageNumIncrement: function() {}
     };
 
+    // ========== 規則匹配 ==========
+
+    function matchRule() {
+        curSite = {SiteTypeID: 0};
+        urlC = false;
+
+        for (let key in DBSite) {
+            let rule = DBSite[key];
+            DBSiteNow = rule;
+
+            // 1. host 匹配
+            if (!matchHost(rule.host)) continue;
+
+            // 2. url 匹配（可選）
+            if (rule.url !== undefined && !matchUrl(rule.url, rule)) continue;
+
+            // 3. 禁用清單
+            let disableList = GM_getValue('menu_disable', []);
+            if (disableList.indexOf(location.hostname) !== -1) {
+                curSite = {SiteTypeID: 0};
+                return;
+            }
+
+            curSite = rule;
+            console.info('[MyAutoPager] 匹配規則:', key);
+            return;
+        }
+    }
+
+    function matchHost(host) {
+        if (!host) return false;
+        if (typeof host === 'string') {
+            if (host.charAt(0) === '/' && host.charAt(host.length - 1) === '/') {
+                return new RegExp(host.slice(1, -1)).test(location.hostname);
+            }
+            return location.hostname === host;
+        }
+        if (Array.isArray(host)) {
+            return host.some(h => {
+                if (typeof h === 'string' && h.charAt(0) === '/' && h.charAt(h.length - 1) === '/') {
+                    return new RegExp(h.slice(1, -1)).test(location.hostname);
+                }
+                return location.hostname === h;
+            });
+        }
+        return false;
+    }
+
+    function matchUrl(url, rule) {
+        if (typeof url === 'string') {
+            if (url.charAt(0) === '/' && url.charAt(url.length - 1) === '/') {
+                return new RegExp(url.slice(1, -1)).test(location.pathname + location.search);
+            }
+            try {
+                return new Function('fun', 'rule', url)(window.autoPage, rule);
+            } catch (e) {
+                console.error('[MyAutoPager] url 規則執行錯誤:', url, e);
+                return false;
+            }
+        }
+        if (typeof url === 'function') {
+            return url(window.autoPage, rule);
+        }
+        return false;
+    }
+
+    function isPager(type) {
+        if (!type) {
+            if (!DBSiteNow || !DBSiteNow.pager) return false;
+            let pType = DBSiteNow.pager.type;
+            if (pType === undefined || pType === 1 || pType === 6) {
+                if (typeof DBSiteNow.pager.nextL === 'string' && !DBSiteNow.pager.nextL.match(/^js;/i)) {
+                    type = DBSiteNow.pager.pageE ? 'n,p' : 'n';
+                } else if (DBSiteNow.pager.pageE) {
+                    type = 'p';
+                }
+            } else if (pType === 2) {
+                if (typeof DBSiteNow.pager.nextL === 'string' && !DBSiteNow.pager.nextL.match(/^js;/i)) type = 'n';
+            }
+            if (!type) return false;
+        }
+        const typeArr = type.split(',');
+        for (let i = 0; i < typeArr.length; i++) {
+            switch (typeArr[i]) {
+                case 'n': if (!getOne(DBSiteNow.pager.nextL)) return false; break;
+                case 'p': if (!getOne(DBSiteNow.pager.pageE)) return false; break;
+                case 'i': if (!getOne(DBSiteNow.pager.insertP[0])) return false; break;
+                case 'r': if (!getOne(DBSiteNow.pager.replaceE)) return false; break;
+            }
+        }
+        return true;
+    }
+
+    window.autoPage.isPager = isPager;
+
     // ========== 後續 Task 將在此添加 ==========
 
 })();
