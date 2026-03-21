@@ -459,7 +459,7 @@
                     }
                 },
                 pager: {
-                    type: 3,
+                    type: 1,
                     scrollD: 3000
                 },
                 function: {
@@ -705,10 +705,18 @@
 
     // ========== 核心翻頁引擎 ==========
 
-    // 滾動事件監聽（延遲 1 秒啟動，避免頁面載入時立即觸發）
+    // 滾動事件監聯（延遲 1 秒啟動，避免頁面載入時立即觸發）
+    var _scrollHandler = null; // 防止 SPA 導航時重複註冊
     function windowScroll(fn1) {
         var beforeScrollTop = document.documentElement.scrollTop || document.body.scrollTop,
             fn = fn1 || function () {};
+
+        // 移除上一次的 scroll handler（SPA 重新匹配規則時）
+        if (_scrollHandler) {
+            window.removeEventListener('scroll', _scrollHandler, false);
+            _scrollHandler = null;
+        }
+
         setTimeout(function () {
             // 避免網頁內容太少，高度撐不起滾動條而無法觸發翻頁
             let scrollTop = document.documentElement.scrollTop || window.pageYOffset || document.body.scrollTop,
@@ -717,13 +725,14 @@
                 insStyle(`html, body {min-height: ${document.documentElement.scrollHeight + 10}px;}`);
             }
 
-            window.addEventListener('scroll', function (e) {
+            _scrollHandler = function (e) {
                 var afterScrollTop = document.documentElement.scrollTop || document.body.scrollTop,
                     delta = afterScrollTop - beforeScrollTop;
                 if (delta == 0) return false;
                 fn(delta > 0 ? 'down' : 'up', e);
                 beforeScrollTop = afterScrollTop;
-            }, false);
+            };
+            window.addEventListener('scroll', _scrollHandler, false);
         }, 1000);
     }
 
@@ -763,7 +772,7 @@
             } else if (curSite.pager.type === 2) {
                 clickNextButton();
             } else if (curSite.pager.type === 6) {
-                checkURL(iframeExtract);
+                intervalPause(); checkURL(iframeExtract);
             }
         });
 
@@ -1229,7 +1238,7 @@
             }
 
             // 10. 替換元素
-            if (curSite.pager.replaceE !== '') replaceElems(response);
+            if (curSite.pager.replaceE !== undefined) replaceElems(response);
 
             // 11. 處理 scriptT
             if (curSite.pager.scriptT || curSite.pager.scriptT == 0) {
@@ -1377,8 +1386,8 @@
                 if (mode == 0 || mode == 2) clonedLink.addEventListener('click', function(e) { e.stopPropagation(); });
                 a.insertAdjacentElement('afterend', clonedLink);
                 a.remove();
-            }, delay);
-        });
+            });
+        }, delay);
     }
 
     // 檢查元素末尾是否為 <br>（用於 insertP6Br 判斷）
@@ -1386,6 +1395,7 @@
         const children = Array.from(e.childNodes).filter(node => {
             return node.nodeType === Node.ELEMENT_NODE || (node.nodeType === Node.TEXT_NODE && node.textContent.trim() !== '');
         });
+        if (children.length === 0) return false;
         const lastElement = children[children.length - 1];
         if (lastElement.tagName === 'BR') {
             return true;
