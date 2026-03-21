@@ -1098,6 +1098,137 @@
         src_bF, xs_bF, cleanuEvent, pageNumIncrement
     });
 
+    // ========== UI：頁碼按鈕（Shadow DOM）==========
+
+    function pageNumber(type) {
+        if (curSite.SiteTypeID === 0 || curSite.hiddenPN || (curSite.pager && curSite.pager.type == 5 && self != top)) {
+            if (getCSS('#Autopage_number') && getCSS('#Autopage_number').shadowRoot) {
+                getCSS('#Autopage_number_button', getCSS('#Autopage_number').shadowRoot).style.display = 'none';
+            }
+            return;
+        }
+        let status;
+        if (getCSS('#Autopage_number') && getCSS('#Autopage_number').shadowRoot) {
+            status = getCSS('#Autopage_number_button', getCSS('#Autopage_number').shadowRoot);
+        }
+        switch (type) {
+            case 'add':
+                add(); break;
+            case 'del':
+                del(); break;
+            case 'set':
+                set(); break;
+        }
+
+        function add() {
+            if (status) {
+                if (status.style.display === 'none') { status.style.display = 'flex'; }
+                return;
+            }
+            // 插入網頁
+            let _style = `<style>#Autopage_number_button {top: calc(75vh);left: 0;width: 32px;height: 32px;padding: 6px;display: flex;position: fixed;opacity: 0.3;transition: .2s;z-index: 9999998;cursor: pointer;user-select: none;flex-direction: column;align-items: center;justify-content: center;box-sizing: content-box;border-radius: 0 50% 50% 0;transform-origin: center;transform: translateX(-8px);background-color: #eee;-webkit-tap-highlight-color: transparent;box-shadow: 1px 1px 3px 0px #aaa;color: #000;font-size: medium;font-family: system-ui;} @media (any-hover: none) {#Autopage_number_button:active {opacity: 0.8;transform: translateX(0);}}@media (any-hover: hover) {#Autopage_number_button:hover {opacity: 0.8;transform: translateX(0);}}</style>`,
+                _html = `<div id="Autopage_number_button" title="1. 此為【當前頁碼】（僅指腳本翻了多少頁，並非實際頁碼，該頁碼可在腳本菜單中關閉）&#10;&#10;2. 滑鼠【左鍵】點擊此處可【臨時暫停翻頁】（再次點擊可恢復）&#10;&#10;3. 滑鼠【右鍵】點擊此處可【回到頂部】">${pageNum._now}</div>`;
+
+            document.documentElement.insertAdjacentHTML('beforeend', `<div id="Autopage_number" style="display: flex !important;position: fixed !important;z-index: 9999998 !important;"></div>`);
+            let Autopage_number = getCSS('#Autopage_number'), shadowRoot = Autopage_number.attachShadow({ mode: 'open' }); // 建立 Shadow DOM 避免網頁樣式影響頁碼元素
+            shadowRoot.innerHTML = _style + _html; // 插入元素
+
+            if (curSite.pager && curSite.pager.type == 5) window.top.document.xiu_pausePage = pausePage;
+            status = getCSS('#Autopage_number_button', shadowRoot);
+            // 左鍵點擊事件（臨時暫停翻頁）
+            status.onclick = function(e) {
+                if (pausePage) { this.style.color = '#FF5722'; this.style.fontStyle = 'italic'; } else { this.style = ''; }
+                pausePage = !pausePage;
+                if (curSite.pager && curSite.pager.type == 5) window.top.document.xiu_pausePage = pausePage;
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            };
+            // 右鍵點擊事件（回到頂部）
+            status.oncontextmenu = function(e) {
+                window.scrollTo(0, 0);
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            };
+            set();
+        }
+        // 監聽儲存當前頁碼的物件值變化
+        function set() {
+            Object.defineProperty(pageNum, 'now', {
+                configurable: true,
+                set: function(value) {
+                    this._now = value;
+                    if (status) status.textContent = value;
+                }
+            });
+        }
+        function del() {
+            if (!status) return;
+            status.style.display = 'none';
+        }
+    }
+
+    // ========== UI：菜單 ==========
+
+    function registerMenuCommand() {
+        menuId.forEach(id => { try { GM_unregisterMenuCommand(id); } catch(e){} });
+        menuId = [];
+
+        // 1. 啟用/禁用（當前網站）
+        let isDisabled = GM_getValue('menu_disable', []).indexOf(location.hostname) !== -1;
+        menuId.push(GM_registerMenuCommand(isDisabled ? menuAll[0][2] : menuAll[0][1], function() {
+            isDisabled ? menu_disable('del') : menu_disable('add');
+            location.reload();
+        }));
+
+        // 2. 顯示頁碼
+        let showPageNum = GM_getValue('menu_page_number', true);
+        menuId.push(GM_registerMenuCommand((showPageNum ? '✅ ' : '❌ ') + menuAll[1][1], function() {
+            menu_switch(showPageNum, 'menu_page_number');
+        }));
+
+        // 3. 歷史記錄
+        let showHistory = GM_getValue('menu_history', true);
+        menuId.push(GM_registerMenuCommand((showHistory ? '✅ ' : '❌ ') + menuAll[2][1], function() {
+            menu_switch(showHistory, 'menu_history');
+        }));
+
+        // 4. 自定義規則
+        menuId.push(GM_registerMenuCommand('#️⃣ ' + menuAll[3][1], function() {
+            customRules();
+        }));
+    }
+
+    function menu_switch(status, name) {
+        GM_setValue(name, !status);
+        if (name === 'menu_page_number') {
+            status ? pageNumber('del') : pageNumber('add');
+            registerMenuCommand();
+            // 避免頁碼開關後翻頁失效
+            if (curSite.SiteTypeID !== 0 && curSite.pager) {
+                if (curSite.pager.type === undefined) curSite.pager.type = 1;
+                if (curSite.pager.scrollD === undefined) curSite.pager.scrollD = 2000;
+                if (curSite.pager.interval === undefined) curSite.pager.interval = 500;
+            }
+        } else {
+            location.reload();
+        }
+    }
+
+    function menu_disable(type) {
+        let list = GM_getValue('menu_disable', []);
+        if (type === 'add') {
+            if (list.indexOf(location.hostname) === -1) list.push(location.hostname);
+        } else if (type === 'del') {
+            list = list.filter(h => h !== location.hostname);
+        }
+        GM_setValue('menu_disable', list);
+    }
+
+    // customRules 將在 Task 7 實作
+    function customRules() { console.log('[MyAutoPager] Rule editor stub - Task 7'); }
+
     // ========== 後續 Task 將在此添加 ==========
 
 })();
