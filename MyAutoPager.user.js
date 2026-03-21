@@ -1338,11 +1338,26 @@
     }
 
     // 清除非文字內容（小說閱讀專用）
-    // 移除廣告、圖片、iframe、腳本等非文字元素，保留純文字閱讀體驗
+    // 移除廣告、圖片、iframe、腳本等非文字元素，以及站點推廣文字，保留純文字閱讀體驗
     function cleanContent(pageE) {
         var removeList = 'iframe, img, script, style, link, ins, noscript, ad, video, audio, canvas, svg, object, embed, form, input, button, select, textarea';
         pageE.forEach(function(el) {
+            // 移除非文字元素
             el.querySelectorAll(removeList).forEach(function(node) { node.remove(); });
+            // 移除廣告容器和站點推廣 div
+            el.querySelectorAll('div').forEach(function(div) {
+                var txt = div.textContent.trim();
+                // 移除含推廣關鍵字的 div（溫馨提示、VIP、廣告相關）
+                if (txt.indexOf('溫馨提示') > -1 || txt.indexOf('VIP') > -1 || txt.indexOf('免廣告') > -1) { div.remove(); return; }
+                // 移除廣告容器 class
+                if (div.className && /\b(gadBlock|clickforce|cfad|ad[-_]?wrap)/i.test(div.className)) { div.remove(); return; }
+                // 移除空 div（無文字內容）
+                if (!txt && div.children.length === 0) div.remove();
+            });
+            // 移除空白 p 標籤
+            el.querySelectorAll('p').forEach(function(p) {
+                if (!p.textContent.trim() && p.children.length === 0) p.remove();
+            });
         });
         return pageE;
     }
