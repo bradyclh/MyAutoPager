@@ -613,6 +613,8 @@
     function matchRule() {
         curSite = {SiteTypeID: 0};
         urlC = false;
+        const disableList = GM_getValue('menu_disable', []);
+        const isDisabled = disableList.indexOf(location.hostname) !== -1;
 
         for (let key in DBSite) {
             let rule = DBSite[key];
@@ -625,8 +627,7 @@
             if (rule.url !== undefined && !matchUrl(rule.url, rule)) continue;
 
             // 3. 禁用清單
-            let disableList = GM_getValue('menu_disable', []);
-            if (disableList.indexOf(location.hostname) !== -1) {
+            if (isDisabled) {
                 curSite = {SiteTypeID: 0};
                 return;
             }
@@ -637,22 +638,17 @@
         }
     }
 
+    function matchSingleHost(h) {
+        if (typeof h === 'string' && h.charAt(0) === '/' && h.charAt(h.length - 1) === '/') {
+            return new RegExp(h.slice(1, -1)).test(location.hostname);
+        }
+        return location.hostname === h;
+    }
+
     function matchHost(host) {
         if (!host) return false;
-        if (typeof host === 'string') {
-            if (host.charAt(0) === '/' && host.charAt(host.length - 1) === '/') {
-                return new RegExp(host.slice(1, -1)).test(location.hostname);
-            }
-            return location.hostname === host;
-        }
-        if (Array.isArray(host)) {
-            return host.some(h => {
-                if (typeof h === 'string' && h.charAt(0) === '/' && h.charAt(h.length - 1) === '/') {
-                    return new RegExp(h.slice(1, -1)).test(location.hostname);
-                }
-                return location.hostname === h;
-            });
-        }
+        if (typeof host === 'string') return matchSingleHost(host);
+        if (Array.isArray(host)) return host.some(matchSingleHost);
         return false;
     }
 
@@ -736,12 +732,25 @@
         }, 1000);
     }
 
-    // 主入口：設定預設值並綁定滾動處理器
-    function pageLoading() {
-        if (curSite.SiteTypeID === 0 || !curSite.pager) return;
+    // 翻頁間隔暫停控制
+    function intervalPause() {
+        if (curSite.pager && curSite.pager.interval) {
+            pausePage = false;
+            setTimeout(function() { pausePage = true; }, curSite.pager.interval);
+        }
+    }
+
+    // 設定 pager 預設值
+    function setPagerDefaults() {
         if (curSite.pager.type === undefined) curSite.pager.type = 1;
         if (curSite.pager.scrollD === undefined) curSite.pager.scrollD = 2000;
         if (curSite.pager.interval === undefined) curSite.pager.interval = 500;
+    }
+
+    // 主入口：設定預設值並綁定滾動處理器
+    function pageLoading() {
+        if (curSite.SiteTypeID === 0 || !curSite.pager) return;
+        setPagerDefaults();
         curSite.pageUrl = '';
 
         windowScroll(function (direction, e) {
@@ -775,13 +784,6 @@
                 intervalPause(); checkURL(iframeExtract);
             }
         });
-
-        function intervalPause() {
-            if (curSite.pager.interval) {
-                pausePage = false;
-                setTimeout(function(){ pausePage = true; }, curSite.pager.interval);
-            }
-        }
     }
 
     // Type 2 按鈕點擊（Task 5 實作）
@@ -797,8 +799,7 @@
             if (btn.innerHTML === curSite.pager.nextHTML) { btn.click(); pageNumIncrement(); }
         } else {
             // 沒指定文字條件，直接點擊
-            pausePage = false;
-            if (curSite.pager.interval) setTimeout(function() { pausePage = true; }, curSite.pager.interval);
+            intervalPause();
             btn.click(); pageNumIncrement();
         }
     }
@@ -807,11 +808,11 @@
         if (!pausePage) return;
         pausePage = false;
 
-        let iframe = document.getElementById('Autopage_iframe');
-        if (!iframe) {
-            iframe = document.createElement('iframe');
+        let existing = document.getElementById('Autopage_iframe');
+        let iframe = existing || document.createElement('iframe');
+
+        if (!existing) {
             iframe.id = 'Autopage_iframe';
-            iframe.src = src.replace(/#.+$/, '');
             insStyle('iframe#Autopage_iframe {position: absolute !important; top: -9999px !important; left: -9999px !important; width: 100% !important; height: 100% !important; border: none !important; z-index: -999 !important;}');
         }
 
@@ -829,12 +830,9 @@
             }, curSite.pager.loadTime / 10);
         };
 
-        // 插入或更新 iframe
-        if (document.getElementById('Autopage_iframe')) {
-            iframe.src = src.replace(/#.+$/, '');
-        } else {
-            document.documentElement.appendChild(iframe);
-        }
+        iframe.src = src.replace(/#.+$/, '');
+
+        if (!existing) document.documentElement.appendChild(iframe);
     }
     // 強制新分頁開啟連結
     function forceTarget(pageE) {
@@ -928,21 +926,10 @@
     // 內部用：從元素取得下一頁 URL，設定 curSite.pageUrl，回傳 boolean
     function getNextE_(css) {
         if (!css) css = curSite.pager.nextL;
-        let next = getOne(css);
-        if (next && next.nodeType === 1 && next.href && next.href.slice(0, 4) === 'http' && next.getAttribute('href').slice(0, 1) !== '#') {
-            if (next.href != curSite.pageUrl) {
-                if (curSite.pager.forceHTTPS && location.protocol === 'https:') {
-                    if (next.href.replace(/^http:/, 'https:') === curSite.pageUrl) { return false; }
-                    curSite.pageUrl = next.href.replace(/^http:/, 'https:');
-                } else {
-                    curSite.pageUrl = next.href;
-                }
-            } else {
-                return false;
-            }
-            return true;
-        }
-        return false;
+        const url = getNextE(css);
+        if (!url) return false;
+        curSite.pageUrl = url;
+        return true;
     }
 
     // 外部 API：從元素取得下一頁 URL，回傳 URL 字串
@@ -968,59 +955,48 @@
         return '';
     }
 
+    // 組合 search 參數 URL
+    function buildSearchUrl(nextNum, pf, reg, lp_ = location.pathname) {
+        let url;
+        if (location.search) {
+            url = indexOF(pf, 's') ? location.search.replace(reg, pf + nextNum) : location.search + '&' + pf + nextNum;
+        } else {
+            url = '?' + pf + nextNum;
+        }
+        return location.origin + lp_ + url;
+    }
+
     // 從元素文字取得頁碼，替換 URL search 參數
     function getNextEP(css, pf, reg) {
-        let nextNum = getOne(css), url = '';
+        let nextNum = getOne(css);
         if (nextNum && nextNum.textContent) {
             nextNum = nextNum.textContent.replaceAll(' ', '');
-            if (location.search) {
-                if (indexOF(pf, 's')) {
-                    url = location.search.replace(reg, pf + nextNum);
-                } else {
-                    url = location.search + '&' + pf + nextNum;
-                }
-            } else {
-                url = '?' + pf + nextNum;
-            }
-            url = location.origin + location.pathname + url;
+            return buildSearchUrl(nextNum, pf, reg);
         }
-        return url;
+        return '';
     }
 
     // 直接給定頁碼，替換 URL search 參數
     function getNextSP(page, pf, reg) {
-        let url = '';
-        if (!page) return url;
+        if (!page) return '';
         if (typeof page === 'number') page = page.toString();
-        if (location.search) {
-            if (indexOF(pf, 's')) {
-                url = location.search.replace(reg, pf + page);
-            } else {
-                url = location.search + '&' + pf + page;
-            }
-        } else {
-            url = '?' + pf + page;
-        }
-        return (location.origin + location.pathname + url);
+        return buildSearchUrl(page, pf, reg);
+    }
+
+    // 組合 pathname URL
+    function buildPathnameUrl(nextNum, reg, a, b) {
+        let url = indexOF(reg) ? location.pathname.replace(reg, a + nextNum + b) : location.pathname + a + nextNum + b;
+        return location.origin + url + location.search;
     }
 
     // 從元素文字取得頁碼，替換 URL pathname 路徑
     function getNextEPN(css, reg, a, b = '') {
-        let nextNum = getOne(css), url = '';
+        let nextNum = getOne(css);
         if (nextNum && nextNum.textContent) {
             nextNum = nextNum.textContent.replaceAll(' ', '');
-            if (location.pathname) {
-                if (indexOF(reg)) {
-                    url = location.pathname.replace(reg, a + nextNum + b);
-                } else {
-                    url = location.pathname + a + nextNum + b;
-                }
-            } else {
-                url = location.pathname + a + nextNum + b;
-            }
-            url = location.origin + url + location.search;
+            return buildPathnameUrl(nextNum, reg, a, b);
         }
-        return url;
+        return '';
     }
 
     // 從 URL pathname 取得頁碼並 +1，替換 pathname 路徑
@@ -1037,18 +1013,7 @@
             nextNum = initP;
             if (endP && (parseInt(nextNum) > parseInt(endP))) return '';
         }
-        let url = '';
-        if (location.pathname) {
-            if (indexOF(reg)) {
-                url = location.pathname.replace(reg, a + nextNum + b);
-            } else {
-                url = location.pathname + a + nextNum + b;
-            }
-        } else {
-            url = location.pathname + a + nextNum + b;
-        }
-        url = location.origin + url + location.search;
-        return url;
+        return buildPathnameUrl(nextNum, reg, a, b);
     }
 
     // 從 URL search 取得頁碼並 +1，替換 search 參數
@@ -1061,18 +1026,7 @@
             nextNum = initP;
             if (endP && (parseInt(nextNum) > parseInt(endP))) return '';
         }
-        let url = '';
-        if (location.search) {
-            if (indexOF(pf, 's')) {
-                url = location.search.replace(reg, pf + nextNum);
-            } else {
-                url = location.search + '&' + pf + nextNum;
-            }
-        } else {
-            url = '?' + pf + nextNum;
-        }
-        url = location.origin + lp_ + url;
-        return url;
+        return buildSearchUrl(nextNum, pf, reg, lp_);
     }
 
     // 從 form input 取得參數，組成 GET URL
@@ -1089,6 +1043,16 @@
     }
 
     // ---- XHR 取得下一頁 ----
+
+    function onXhrError(url, detail) {
+        console.log('[MyAutoPager] XHR error URL:', url, detail);
+        GM_notification({text: '❌ 取得下一頁失敗...', timeout: 5000});
+    }
+    function onXhrTimeout(url, detail) {
+        setTimeout(function() { curSite.pageUrl = ''; }, 3000);
+        console.log('[MyAutoPager] XHR timeout URL:', url, detail);
+        GM_notification({text: '❌ 取得下一頁逾時，可 3 秒後再次滾動重試...', timeout: 5000});
+    }
 
     // Type 1：XHR 取得下一頁內容（Chrome/Firefox 雙路徑）
     function fetchNextPage(url) {
@@ -1119,15 +1083,8 @@
                         console.error('[MyAutoPager] 處理下一頁內容時出錯\n', e, '\nURL：' + url, '\n最終 URL：' + response.finalUrl, '\n狀態：' + response.statusText);
                     }
                 },
-                onerror: function (response) {
-                    console.log('[MyAutoPager] XHR 失敗 URL：' + url, response);
-                    GM_notification({text: '❌ 取得下一頁失敗...', timeout: 5000});
-                },
-                ontimeout: function (response) {
-                    setTimeout(function(){ curSite.pageUrl = ''; }, 3000);
-                    console.log('[MyAutoPager] XHR 逾時 URL：' + url, response);
-                    GM_notification({text: '❌ 取得下一頁逾時，可 3 秒後再次滾動重試...', timeout: 5000});
-                }
+                onerror: function (response) { onXhrError(url, response); },
+                ontimeout: function (response) { onXhrTimeout(url, response); }
             });
         } else {
             const xhr = new XMLHttpRequest();
@@ -1145,16 +1102,32 @@
                     console.error('[MyAutoPager] 處理下一頁內容時出錯\n', e, '\nURL：' + url, '\n最終 URL：' + xhr.responseURL, '\n狀態：' + xhr.statusText);
                 }
             };
-            xhr.onerror = function() {
-                console.log('[MyAutoPager] XHR 失敗 URL：' + url, xhr.statusText);
-                GM_notification({text: '❌ 取得下一頁失敗...', timeout: 5000});
-            };
-            xhr.ontimeout = function() {
-                setTimeout(function(){ curSite.pageUrl = ''; }, 3000);
-                console.log('[MyAutoPager] XHR 逾時 URL：' + url, xhr.statusText);
-                GM_notification({text: '❌ 取得下一頁逾時，可 3 秒後再次滾動重試...', timeout: 5000});
-            };
+            xhr.onerror = function() { onXhrError(url, xhr.statusText); };
+            xhr.ontimeout = function() { onXhrTimeout(url, xhr.statusText); };
             xhr.send();
+        }
+    }
+
+    // ---- Hook 函數 ----
+
+    function callBeforeHook(pageE) {
+        if (!curSite.function || !curSite.function.bF) return pageE;
+        let fn = curSite.function.bF, fp = curSite.function.bFp;
+        if (typeof fn === 'string') {
+            return fp ? new Function('pageE', 'bFp', 'fun', fn)(pageE, fp, window.autoPage)
+                      : new Function('pageE', 'fun', fn)(pageE, window.autoPage);
+        }
+        return fp ? fn(pageE, fp) : fn(pageE);
+    }
+
+    function callAfterHook() {
+        if (!curSite.function || !curSite.function.aF) return;
+        let fn = curSite.function.aF, fp = curSite.function.aFp;
+        if (typeof fn === 'string') {
+            fp ? new Function('aFp', 'fun', fn)(fp, window.autoPage)
+               : new Function('fun', fn)(window.autoPage);
+        } else {
+            fp ? fn(fp) : fn();
         }
     }
 
@@ -1175,21 +1148,7 @@
 
         if (pageE.length > 0 && toE) {
             // 5. 執行 bF 插入前函數
-            if (curSite.function && curSite.function.bF) {
-                if (curSite.function.bFp) {
-                    if (typeof(curSite.function.bF) == 'string') {
-                        pageE = new Function('pageE', 'bFp', 'fun', curSite.function.bF)(pageE, curSite.function.bFp, window.autoPage);
-                    } else {
-                        pageE = curSite.function.bF(pageE, curSite.function.bFp);
-                    }
-                } else {
-                    if (typeof(curSite.function.bF) == 'string') {
-                        pageE = new Function('pageE', 'fun', curSite.function.bF)(pageE, window.autoPage);
-                    } else {
-                        pageE = curSite.function.bF(pageE);
-                    }
-                }
-            }
+            pageE = callBeforeHook(pageE);
 
             // 強制新分頁開啟連結（blank 4/5/6）
             if (curSite.blank === 4 || curSite.blank === 5 || curSite.blank === 6) {
@@ -1207,8 +1166,9 @@
                     if (unsafeWindow.insertP6Br === true) {
                         afterend += '<br/><br/>';
                     } else if (unsafeWindow.insertP6Br === undefined) {
-                        if (getAll('br', getOne(curSite.pager.pageE)).length > 10) {
-                            if (!checkLastBr(getOne(curSite.pager.pageE))) {
+                        const mainElem = getOne(curSite.pager.pageE);
+                        if (getAll('br', mainElem).length > 10) {
+                            if (!checkLastBr(mainElem)) {
                                 unsafeWindow.insertP6Br = true;
                                 afterend += '<br/><br/>';
                             } else {
@@ -1257,21 +1217,7 @@
             }
 
             // 12. 執行 aF 插入後函數
-            if (curSite.function && curSite.function.aF) {
-                if (curSite.function.aFp) {
-                    if (typeof(curSite.function.aF) == 'string') {
-                        new Function('aFp', 'fun', curSite.function.aF)(curSite.function.aFp, window.autoPage);
-                    } else {
-                        curSite.function.aF(curSite.function.aFp);
-                    }
-                } else {
-                    if (typeof(curSite.function.aF) == 'string') {
-                        new Function('fun', curSite.function.aF)(window.autoPage);
-                    } else {
-                        curSite.function.aF();
-                    }
-                }
-            }
+            callAfterHook();
         } else {
             // 13. 取得主體元素失敗
             console.log(curSite.pager.pageE, pageE, curSite.pager.insertP, toE, response);
@@ -1328,7 +1274,8 @@
         if (!curSite.pageUrl) return;
         // 對於自帶類似功能或覆蓋了 history 的網站，跳過
         if (window.top.history.toString() !== '[object History]') return;
-        title = title || ((pageE.querySelector('title')) ? pageE.querySelector('title').textContent : window.top.document.title);
+        const titleEl = pageE.querySelector && pageE.querySelector('title');
+        title = title || (titleEl ? titleEl.textContent : window.top.document.title);
         url = url || curSite.pageUrl;
         window.top.document.Autopage_nowUrl = curSite.pageUrl;
         // 下一頁 URL 與當前網頁 URL 協議不同時，以當前網頁協議為準
@@ -1414,15 +1361,13 @@
     // ========== UI：頁碼按鈕（Shadow DOM）==========
 
     function pageNumber(type) {
+        const host = getCSS('#Autopage_number');
+        const shadow = host && host.shadowRoot;
+        let status = shadow && getCSS('#Autopage_number_button', shadow);
+
         if (curSite.SiteTypeID === 0 || curSite.hiddenPN || (curSite.pager && curSite.pager.type == 5 && self != top)) {
-            if (getCSS('#Autopage_number') && getCSS('#Autopage_number').shadowRoot) {
-                getCSS('#Autopage_number_button', getCSS('#Autopage_number').shadowRoot).style.display = 'none';
-            }
+            if (status) status.style.display = 'none';
             return;
-        }
-        let status;
-        if (getCSS('#Autopage_number') && getCSS('#Autopage_number').shadowRoot) {
-            status = getCSS('#Autopage_number_button', getCSS('#Autopage_number').shadowRoot);
         }
         switch (type) {
             case 'add':
@@ -1520,9 +1465,7 @@
             registerMenuCommand();
             // 避免頁碼開關後翻頁失效
             if (curSite.SiteTypeID !== 0 && curSite.pager) {
-                if (curSite.pager.type === undefined) curSite.pager.type = 1;
-                if (curSite.pager.scrollD === undefined) curSite.pager.scrollD = 2000;
-                if (curSite.pager.interval === undefined) curSite.pager.interval = 500;
+                setPagerDefaults();
             }
         } else {
             location.reload();
@@ -1684,23 +1627,16 @@
 
     // ========== 初始化 ==========
 
-    // 匹配規則
+    function initSite() {
+        registerMenuCommand();
+        if (GM_getValue('menu_page_number')) { pageNumber('add'); } else { pageNumber('set'); }
+        if (curSite.blank !== undefined) setTimeout(forceTarget, 1000);
+        if (curSite.style) insStyle(curSite.style);
+        pageLoading();
+    }
+
     matchRule();
-
-    // 註冊菜單
-    registerMenuCommand();
-
-    // 顯示頁碼
-    if (GM_getValue('menu_page_number')) { pageNumber('add'); } else { pageNumber('set'); }
-
-    // 強制新分頁
-    if (curSite.blank !== undefined) setTimeout(forceTarget, 1000);
-
-    // 注入 CSS
-    if (curSite.style) insStyle(curSite.style);
-
-    // 啟動翻頁
-    pageLoading();
+    initSite();
 
     // SPA/PJAX 支援
     if (urlC) {
@@ -1721,13 +1657,7 @@
             setDBSite();
             mergeRules();
             matchRule();
-            registerMenuCommand();
-
-            if (curSite.blank !== undefined) setTimeout(forceTarget, 1000);
-            if (curSite.style) insStyle(curSite.style);
-            if (GM_getValue('menu_page_number')) { pageNumber('add'); } else { pageNumber('set'); }
-
-            pageLoading();
+            initSite();
         });
     }
 
