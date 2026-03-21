@@ -314,6 +314,17 @@
     function setDBSite() {
         DBSite = {
             // ---- 個人自訂規則 ----
+            novel543: {
+                host: 'www.novel543.com',
+                url: "/\\d+_\\d+\\.html/",
+                style: 'div[id*="tam-ad"] {display: none !important;}',
+                history: true,
+                pager: {
+                    nextL: '(//a[contains(text(),"下一章")])[last()]',
+                    pageE: 'body > h1, body > p',
+                    scrollD: 3000
+                }
+            },
             uukanshu: {
                 host: 'uukanshu.cc',
                 style: '.▶, iframe[src*="political-effort"], script[src*="political-effort"], script[src*="grown-mouth"]',
