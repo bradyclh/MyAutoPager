@@ -16,6 +16,8 @@
 // @match        *://*.uukanshu.cc/*
 // @match        *://69shuba.tw/*
 // @match        *://*.69shuba.tw/*
+// @match        *://69shuba.com/*
+// @match        *://*.69shuba.com/*
 // @noframes
 // ==/UserScript==
 
@@ -136,6 +138,11 @@
             host: '69shuba.tw',
             style: 'div[id*="pf-"], script[src*="novelapis"], script[src*="pubfuture"], .ad, iframe {display:none!important} #nr1, #nr1 * {text-align:center!important; font-size:36px!important; line-height:1.8!important; color:#999!important} .nr_title {text-align:center!important; font-size:24px!important; color:#ddd!important; display:block!important; margin:20px 0!important}',
             pager: { nextL: '#pb_next', pageE: '.nr_title, .nr_nr', replaceE: '.nr_page', scrollD: 3000 }
+        },
+        '69shuba_com': {
+            host: '69shuba.com',
+            style: '.yueduad1, div[id*="ad-"], script[src*="novelapis"], script[src*="pubfuture"], .ad, iframe {display:none!important} .txtnav {text-align:center!important; font-size:36px!important; line-height:1.8!important; color:#999!important} h1.hide720 {text-align:center!important; font-size:24px!important; color:#ddd!important; display:block!important; margin:20px 0!important}',
+            pager: { nextL: '.page1 a:last-child', pageE: '.txtnav', replaceE: '.page1', scrollD: 3000 }
         }
     };
 
