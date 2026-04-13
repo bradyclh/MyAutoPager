@@ -342,6 +342,15 @@
                     bF: function(pageE) { return cleanContent(pageE); }
                 }
             },
+            '69shuba_com': {
+                host: '/69shuba\\.com/',
+                style: '.yueduad1, div[id*="ad-"], script[src*="novelapis"], script[src*="pubfuture"], .ad, iframe {display: none !important;} .txtnav {text-align: center !important; font-size: 36px !important; line-height: 1.8 !important; color: #999 !important;} h1.hide720 {text-align: center !important; font-size: 24px !important; color: #ddd !important; display: block !important; margin: 20px 0 !important;}',
+                history: true, retry: 3000,
+                pager: { nextL: '.page1 a:last-child', pageE: '.txtnav', replaceE: '.page1', scrollD: 3000 },
+                function: {
+                    bF: function(pageE) { return cleanContent(pageE); }
+                }
+            },
 
             // ---- 搜尋引擎 ----
             google: {
