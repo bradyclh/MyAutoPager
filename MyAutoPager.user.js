@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.0.1
+// @version      1.1.0
 // @author       clh (based on AutoPager by X.I.U)
 // @description  自動無縫翻頁 — 將下一頁內容無縫載入至網頁底部
 // @copyright    Original AutoPager (c) X.I.U (https://github.com/XIU2/UserScript) GPL-3.0
@@ -55,6 +55,39 @@
 
 (function() {
     'use strict';
+
+
+    // ========== 彈窗攔截：條件式閘道 ==========
+    // 此腳本 @match */*，攔截僅在匹配到帶 popupBlock 旗標的規則後啟用，避免破壞一般站點（如 OAuth popup）。
+    // 限制：@run-at document-end，覆寫僅能攔截本腳本執行後才發生的 window.open 呼叫；
+    //       頁面 <head> 中同步 inline 腳本保存的原始參考不受影響（結構性限制）。
+    // 另一限制：SPA 離開小說站後，先前被中和過的錨點（data-blocked-href）不會自動還原 —
+    //         當前四個小說站皆全頁刷新，非 SPA，此情境不觸發。
+    var popupBlockEnabled = false;
+
+    (function earlyOpenOverride() {
+        var orig = window.open;
+        try {
+            Object.defineProperty(window, 'open', {
+                value: function(url, target, features) {
+                    if (popupBlockEnabled) {
+                        console.warn('[MyAutoPager] 攔截 window.open:', url);
+                        return null;
+                    }
+                    try { return orig.apply(window, arguments); } catch (e) { return null; }
+                },
+                writable: false,
+                configurable: true  // 允許後續清理或換手段，不鎖死
+            });
+        } catch (e) {
+            try {
+                window.open = function(url) {
+                    if (popupBlockEnabled) { console.warn('[MyAutoPager] 攔截 window.open:', url); return null; }
+                    return orig.apply(window, arguments);
+                };
+            } catch (e2) {}
+        }
+    })();
 
 
     // ========== 相容性 polyfill ==========
@@ -311,7 +344,7 @@
                 host: 'look.thisiscm.com',
                 url: "/\\d+_\\d+/",
                 style: 'ins.clickforceads, iframe.cfadif, div[id*="tam-ad"], div[id*="cfad"], ad {display: none !important;}',
-                history: true,
+                history: true, popupBlock: true,
                 pager: {
                     nextL: '(//a[contains(text(),"下一章")])[last()]',
                     pageE: '.chapter-content',
@@ -326,7 +359,7 @@
             uukanshu: {
                 host: 'uukanshu.cc',
                 style: '.▶, iframe[src*="political-effort"], script[src*="political-effort"], script[src*="grown-mouth"]',
-                history: true, retry: 3000,
+                history: true, retry: 3000, popupBlock: true,
                 pager: { nextL: '#linkNext', pageE: '.readcotent', replaceE: '.mulu-box', scrollD: 3000 },
                 function: {
                     bF: function(pageE) { return cleanContent(pageE); },
@@ -336,7 +369,7 @@
             '69shuba': {
                 host: '69shuba.tw',
                 style: 'div[id*="pf-"], script[src*="novelapis"], script[src*="pubfuture"], .ad, iframe {display: none !important;} #nr1, #nr1 * {text-align: center !important; font-size: 36px !important; line-height: 1.8 !important; color: #999 !important;} .nr_title {text-align: center !important; font-size: 24px !important; color: #ddd !important; display: block !important; margin: 20px 0 !important;}',
-                history: true, retry: 3000,
+                history: true, retry: 3000, popupBlock: true,
                 pager: { nextL: '#pb_next', pageE: '.nr_title, .nr_nr', replaceE: '.nr_page', scrollD: 3000 },
                 function: {
                     bF: function(pageE) { return cleanContent(pageE); }
@@ -345,7 +378,7 @@
             '69shuba_com': {
                 host: '/69shuba\\.com/',
                 style: '.yueduad1, div[id*="ad-"], script[src*="novelapis"], script[src*="pubfuture"], .ad, iframe {display: none !important;} .txtnav {text-align: center !important; font-size: 36px !important; line-height: 1.8 !important; color: #999 !important;} h1.hide720 {text-align: center !important; font-size: 24px !important; color: #ddd !important; display: block !important; margin: 20px 0 !important;}',
-                history: true, retry: 3000,
+                history: true, retry: 3000, popupBlock: true,
                 pager: { nextL: '.page1 a:last-child', pageE: '.txtnav', replaceE: '.page1', scrollD: 3000 },
                 function: {
                     bF: function(pageE) { return cleanContent(pageE); }
@@ -1346,6 +1379,45 @@
         return pageE;
     }
 
+    // 內聯事件屬性（會觸發彈窗/跳轉）
+    var INLINE_EVENT_ATTRS = ['onclick', 'onmousedown', 'onmouseup', 'ontouchstart', 'ontouchend', 'onpointerdown', 'onauxclick', 'onsubmit', 'oncontextmenu'];
+
+    // 跨域判斷（假設兩段式 TLD；對當前小說站有效）
+    function getBaseDomain() {
+        var parts = location.hostname.split('.');
+        return parts.length >= 2 ? parts.slice(-2).join('.') : location.hostname;
+    }
+    function isCrossOrigin(url) {
+        try {
+            var host = new URL(url, location.href).hostname;
+            if (!host || host === location.hostname) return false;
+            return host.indexOf(getBaseDomain()) === -1;
+        } catch (e) { return false; }
+    }
+
+    // 清除內聯事件屬性 + 中和危險連結（javascript: / 跨域）
+    function stripPopupTriggers(el) {
+        if (!el || el.nodeType !== 1) return;
+        INLINE_EVENT_ATTRS.forEach(function(a) { el.removeAttribute(a); });
+        var sel = '[' + INLINE_EVENT_ATTRS.join('],[') + ']';
+        try {
+            el.querySelectorAll(sel).forEach(function(n) {
+                INLINE_EVENT_ATTRS.forEach(function(a) { n.removeAttribute(a); });
+            });
+        } catch (e) {}
+        el.querySelectorAll('a[href]').forEach(function(a) {
+            var raw = a.getAttribute('href') || '';
+            var isJs = raw.toLowerCase().replace(/\s/g, '').indexOf('javascript:') === 0;
+            // 用原始 href 字串餵 isCrossOrigin，避免 DOMParser 文件無 baseURI 時 a.href 畸形
+            if (isJs || isCrossOrigin(raw)) {
+                a.setAttribute('data-blocked-href', raw);
+                a.removeAttribute('href');
+                a.removeAttribute('target');
+                a.style.setProperty('pointer-events', 'none', 'important');
+            }
+        });
+    }
+
     // 清除非文字內容（小說閱讀專用）
     // 移除廣告、圖片、iframe、腳本等非文字元素，以及站點推廣文字，保留純文字閱讀體驗
     function cleanContent(pageE) {
@@ -1353,6 +1425,8 @@
         pageE.forEach(function(el) {
             // 移除非文字元素
             el.querySelectorAll(removeList).forEach(function(node) { node.remove(); });
+            // 清除彈窗觸發點（僅在啟用時）
+            if (popupBlockEnabled) stripPopupTriggers(el);
             // 移除廣告容器、站點推廣文字（div 和 p 都檢查）
             el.querySelectorAll('div, p').forEach(function(node) {
                 // 移除廣告容器 class
@@ -1365,6 +1439,81 @@
             });
         });
         return pageE;
+    }
+
+    // 第三層：攔截 document 級別的點擊劫持（僅小說站啟用）
+    var clickGuardInstalled = false;
+    function installClickGuard() {
+        if (clickGuardInstalled) return;
+        clickGuardInstalled = true;
+
+        document.addEventListener('click', function(e) {
+            if (!popupBlockEnabled) return;
+            var t = e.target;
+            if (!t || t.nodeType !== 1) return;
+
+            // 放行腳本自身 UI
+            if (t.id === 'Autopage_number' || (t.closest && t.closest('#Autopage_number'))) return;
+
+            // A. 攔截危險錨點（javascript: 協議 / 跨域 target=_blank）
+            var anchor = t.closest ? t.closest('a') : null;
+            if (anchor) {
+                var rawHref = anchor.getAttribute('href') || '';
+                if (rawHref.toLowerCase().replace(/\s/g, '').indexOf('javascript:') === 0) {
+                    console.warn('[MyAutoPager] 攔截 javascript: 連結');
+                    e.stopPropagation(); e.preventDefault();
+                    return;
+                }
+                if (anchor.getAttribute('target') === '_blank' && anchor.href && isCrossOrigin(anchor.href)) {
+                    console.warn('[MyAutoPager] 攔截跨域 _blank 連結:', anchor.href);
+                    e.stopPropagation(); e.preventDefault();
+                    return;
+                }
+            }
+
+            // B. 放行 pageE 內容範圍
+            if (curSite && curSite.pager && curSite.pager.pageE) {
+                try {
+                    var contentEls = getAll(curSite.pager.pageE);
+                    for (var i = 0; i < contentEls.length; i++) {
+                        if (contentEls[i].contains(t)) return;
+                    }
+                } catch (err) {}
+            }
+
+            // C. 偵測可疑全頁/半頁固定覆蓋層
+            var rect = t.getBoundingClientRect();
+            var vw = window.innerWidth, vh = window.innerHeight;
+            if (rect.width >= vw * 0.7 && rect.height >= vh * 0.5) {
+                var style = getComputedStyle(t);
+                var pos = style.position;
+                if (pos === 'fixed' || pos === 'absolute') {
+                    var zIdx = parseInt(style.zIndex) || 0;
+                    if (zIdx >= 100) {
+                        console.warn('[MyAutoPager] 攔截可疑覆蓋層點擊', t);
+                        e.stopPropagation();
+                        e.preventDefault();
+                    }
+                }
+            }
+        }, true);
+
+        // 攔截可疑 form 提交（target=_blank 或跨域 action）
+        document.addEventListener('submit', function(e) {
+            if (!popupBlockEnabled) return;
+            var f = e.target;
+            if (!f || f.tagName !== 'FORM') return;
+            if (f.getAttribute('target') === '_blank') {
+                console.warn('[MyAutoPager] 攔截 target=_blank form 提交');
+                e.stopPropagation(); e.preventDefault();
+                return;
+            }
+            var action = f.getAttribute('action') || '';
+            if (action && isCrossOrigin(action)) {
+                console.warn('[MyAutoPager] 攔截跨域 form 提交:', action);
+                e.stopPropagation(); e.preventDefault();
+            }
+        }, true);
     }
 
     // 清除 DOM 事件（克隆元素）
@@ -1671,6 +1820,14 @@
     // ========== 初始化 ==========
 
     function initSite() {
+        // 旗標來自規則物件本身，避免與 host 偵測雙源漂移；SPA 導航重進時依新 curSite 重設
+        popupBlockEnabled = !!(curSite && curSite.popupBlock);
+        if (popupBlockEnabled) {
+            installClickGuard();
+            if (curSite && curSite.pager && curSite.pager.pageE) {
+                try { cleanContent(getAll(curSite.pager.pageE)); } catch (e) {}
+            }
+        }
         registerMenuCommand();
         if (GM_getValue('menu_page_number')) { pageNumber('add'); } else { pageNumber('set'); }
         if (curSite.blank !== undefined) setTimeout(forceTarget, 1000);
