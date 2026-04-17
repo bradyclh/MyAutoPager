@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.1.0
+// @version      1.2.0
 // @author       clh (based on AutoPager by X.I.U)
 // @description  iPhone Safari 小說自動翻頁 — 支援 Safari Userscripts App
 // @copyright    Original AutoPager (c) X.I.U (https://github.com/XIU2/UserScript) GPL-3.0
@@ -23,6 +23,21 @@
 
 (function() {
     'use strict';
+
+    // ========== 彈窗攔截（第一層：覆寫 window.open） ==========
+    // 盡早執行，防止頁面腳本保存原始參考
+    try {
+        Object.defineProperty(window, 'open', {
+            value: function(url) {
+                console.warn('[MyAutoPager] 攔截 window.open:', url);
+                return null;
+            },
+            writable: false,
+            configurable: false
+        });
+    } catch (e) {
+        try { window.open = function(url) { console.warn('[MyAutoPager] 攔截 window.open:', url); return null; }; } catch (e2) {}
+    }
 
     // ========== DOM 選擇器 ==========
 
@@ -90,10 +105,49 @@
     var REMOVE_TAGS = 'iframe,img,script,style,link,ins,noscript,ad,video,audio,canvas,svg,object,embed,form,input,button,select,textarea';
     var PROMO_KEYWORDS = ['溫馨提示', 'VIP', '免廣告', '加入書架', '搜書名'];
     var AD_CLASS_RE = /\b(gadBlock|clickforce|cfad|ad[-_]?wrap)/i;
+    var INLINE_EVENT_ATTRS = ['onclick', 'onmousedown', 'onmouseup', 'ontouchstart', 'ontouchend', 'onpointerdown', 'onauxclick', 'onsubmit', 'oncontextmenu'];
+
+    // 判斷 URL 是否為跨域（相對基礎域名；假設兩段式 TLD，對當前支援站點有效）
+    function getBaseDomain() {
+        var parts = location.hostname.split('.');
+        return parts.length >= 2 ? parts.slice(-2).join('.') : location.hostname;
+    }
+
+    function isCrossOrigin(url) {
+        try {
+            var host = new URL(url, location.href).hostname;
+            if (!host || host === location.hostname) return false;
+            return host.indexOf(getBaseDomain()) === -1;
+        } catch (e) { return false; }
+    }
+
+    // 第二層：清除內聯事件屬性 + 中和危險連結
+    function stripPopupTriggers(el) {
+        if (!el || el.nodeType !== 1) return;
+        INLINE_EVENT_ATTRS.forEach(function(a) { el.removeAttribute(a); });
+        var sel = '[' + INLINE_EVENT_ATTRS.join('],[') + ']';
+        try {
+            el.querySelectorAll(sel).forEach(function(n) {
+                INLINE_EVENT_ATTRS.forEach(function(a) { n.removeAttribute(a); });
+            });
+        } catch (e) {}
+        el.querySelectorAll('a[href]').forEach(function(a) {
+            var raw = a.getAttribute('href') || '';
+            var isJs = raw.toLowerCase().replace(/\s/g, '').indexOf('javascript:') === 0;
+            // 用原始 href 字串餵 isCrossOrigin，避免 DOMParser 文件無 baseURI 時 a.href 畸形
+            if (isJs || isCrossOrigin(raw)) {
+                a.setAttribute('data-blocked-href', raw);
+                a.removeAttribute('href');
+                a.removeAttribute('target');
+                a.style.setProperty('pointer-events', 'none', 'important');
+            }
+        });
+    }
 
     function cleanContent(elements) {
         elements.forEach(function(el) {
             el.querySelectorAll(REMOVE_TAGS).forEach(function(n) { n.remove(); });
+            stripPopupTriggers(el);
             el.querySelectorAll('div, p').forEach(function(node) {
                 if (node.className && AD_CLASS_RE.test(node.className)) { node.remove(); return; }
                 var txt = node.textContent.trim();
@@ -106,6 +160,75 @@
             });
         });
         return elements;
+    }
+
+    // 第三層：攔截 document 級別的點擊劫持
+    function installClickGuard() {
+        document.addEventListener('click', function(e) {
+            var t = e.target;
+            if (!t || t.nodeType !== 1) return;
+
+            // 放行腳本自身 UI
+            if (t.id === 'Autopage_number' || (t.closest && t.closest('#Autopage_number'))) return;
+
+            // A. 無條件攔截危險錨點（javascript: 協議 / 跨域 target=_blank）
+            var anchor = t.closest ? t.closest('a') : null;
+            if (anchor) {
+                var rawHref = anchor.getAttribute('href') || '';
+                if (rawHref.toLowerCase().replace(/\s/g, '').indexOf('javascript:') === 0) {
+                    console.warn('[MyAutoPager] 攔截 javascript: 連結');
+                    e.stopPropagation(); e.preventDefault();
+                    return;
+                }
+                if (anchor.getAttribute('target') === '_blank' && anchor.href && isCrossOrigin(anchor.href)) {
+                    console.warn('[MyAutoPager] 攔截跨域 _blank 連結:', anchor.href);
+                    e.stopPropagation(); e.preventDefault();
+                    return;
+                }
+            }
+
+            // B. 放行 pageE 內容範圍
+            if (curSite && curSite.pager.pageE) {
+                try {
+                    var contentEls = getAll(curSite.pager.pageE);
+                    for (var i = 0; i < contentEls.length; i++) {
+                        if (contentEls[i].contains(t)) return;
+                    }
+                } catch (err) {}
+            }
+
+            // C. 偵測可疑全頁/半頁固定覆蓋層
+            var rect = t.getBoundingClientRect();
+            var vw = window.innerWidth, vh = window.innerHeight;
+            if (rect.width >= vw * 0.7 && rect.height >= vh * 0.5) {
+                var style = getComputedStyle(t);
+                var pos = style.position;
+                if (pos === 'fixed' || pos === 'absolute') {
+                    var zIdx = parseInt(style.zIndex) || 0;
+                    if (zIdx >= 100) {
+                        console.warn('[MyAutoPager] 攔截可疑覆蓋層點擊', t);
+                        e.stopPropagation();
+                        e.preventDefault();
+                    }
+                }
+            }
+        }, true);
+
+        // 攔截可疑 form 提交（target=_blank 或跨域 action）
+        document.addEventListener('submit', function(e) {
+            var f = e.target;
+            if (!f || f.tagName !== 'FORM') return;
+            if (f.getAttribute('target') === '_blank') {
+                console.warn('[MyAutoPager] 攔截 target=_blank form 提交');
+                e.stopPropagation(); e.preventDefault();
+                return;
+            }
+            var action = f.getAttribute('action') || '';
+            if (action && isCrossOrigin(action)) {
+                console.warn('[MyAutoPager] 攔截跨域 form 提交:', action);
+                e.stopPropagation(); e.preventDefault();
+            }
+        }, true);
     }
 
     // ========== 小說規則 ==========
@@ -376,6 +499,8 @@
         if (disabled) { console.info('[MyAutoPager] 已禁用:', location.hostname); return; }
 
         if (curSite.style) insStyle(curSite.style);
+        try { cleanContent(getAll(curSite.pager.pageE)); } catch (e) {}
+        installClickGuard();
         createPageNumber();
         startScrollWatch();
     });
