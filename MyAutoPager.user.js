@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.0
+// @version      1.2.1
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -387,7 +387,7 @@
                 }
             },
             uuread: {
-                host: 'uuread.tw',
+                host: '/(^|\\.)uuread\\.tw$/',
                 url: "/\\/chapter\\//",
                 history: true, retry: 3000, popupBlock: true,
                 pager: {
