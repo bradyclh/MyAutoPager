@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.0
+// @version      1.3.1
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -274,7 +274,15 @@
         uuread: {
             host: 'uuread.tw',
             url: /\/chapter\//,
-            pager: { nextL: "(//div[contains(@class,'operate')]//a[contains(text(),'下一頁') or contains(text(),'下一章')])[last()]", pageE: '#nr', replaceE: '.operate', scrollD: 2000 }
+            pager: { nextL: "(//div[contains(@class,'operate')]//a[contains(text(),'下一頁') or contains(text(),'下一章')])[last()]", pageE: '#nr', replaceE: '.operate', scrollD: 2000 },
+            afterPage: function() {
+                // uuread 字體大小由客戶端 JS 套 inline style，XHR 取得的新頁沒有，
+                // 把首個 #nr 的 font-size 複製到後續插入的內容。
+                var all = document.querySelectorAll('.txt_tcontent');
+                if (all.length > 1 && all[0].style.fontSize) {
+                    for (var i = 1; i < all.length; i++) all[i].style.fontSize = all[0].style.fontSize;
+                }
+            }
         }
     };
 
