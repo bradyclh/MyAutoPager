@@ -1,6 +1,8 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
 // @version      1.3.0
+// @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
+// @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
 // @description  iPhone Safari 小說自動翻頁 — 支援 Safari Userscripts App
 // @copyright    Original AutoPager (c) X.I.U (https://github.com/XIU2/UserScript) GPL-3.0

@@ -1,6 +1,8 @@
 // ==UserScript==
 // @name         MyAutoPager
 // @version      1.2.0
+// @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
+// @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
 // @description  自動無縫翻頁 — 將下一頁內容無縫載入至網頁底部
 // @copyright    Original AutoPager (c) X.I.U (https://github.com/XIU2/UserScript) GPL-3.0
