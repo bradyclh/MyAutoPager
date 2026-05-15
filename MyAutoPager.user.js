@@ -79,7 +79,7 @@
                     try { return orig.apply(window, arguments); } catch (e) { return null; }
                 },
                 writable: false,
-                configurable: true  // 允許後續清理或換手段，不鎖死
+                configurable: true // 允許後續清理或換手段，不鎖死
             });
         } catch (e) {
             try {
@@ -1134,7 +1134,7 @@
                 'Accept': 'text/html,application/xhtml+xml,application/xml'
             };
             if (curSite.xRequestedWith === true) headers['x-requested-with'] = 'XMLHttpRequest';
-            if (curSite.noReferer !== true) headers['Referer'] = location.href;
+            if (curSite.noReferer !== true) headers.Referer = location.href;
 
             GM_xmlhttpRequest({
                 url: url,
