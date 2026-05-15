@@ -22,7 +22,7 @@
 
 | 分類 | 網站 |
 |------|------|
-| 個人 | look.thisiscm.com (稷下書院)、uukanshu、69shuba |
+| 個人 | look.thisiscm.com (稷下書院)、uukanshu、69shuba、uuread |
 | 搜尋引擎 | Google、Bing、Baidu、Sogou、DuckDuckGo |
 | CMS 模板 | WordPress（列表/文章）、Discuz!（列表/帖子） |
 | 常用站點 | 知乎、GitHub、GreasyFork、StackOverflow、V2EX |

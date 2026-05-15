@@ -384,6 +384,20 @@
                     bF: function(pageE) { return cleanContent(pageE); }
                 }
             },
+            uuread: {
+                host: 'uuread.tw',
+                url: "/\\/chapter\\//",
+                history: true, retry: 3000, popupBlock: true,
+                pager: {
+                    nextL: "(//div[contains(@class,'operate')]//a[contains(text(),'下一頁') or contains(text(),'下一章')])[last()]",
+                    pageE: '#nr',
+                    replaceE: '.operate',
+                    scrollD: 2000
+                },
+                function: {
+                    bF: function(pageE) { return cleanContent(pageE); }
+                }
+            },
 
             // ---- 搜尋引擎 ----
             google: {
