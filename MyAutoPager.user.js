@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.2
+// @version      1.2.3
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -392,7 +392,7 @@
                 history: true, retry: 3000, popupBlock: true,
                 pager: {
                     nextL: "(//div[contains(@class,'operate')]//a[contains(text(),'下一頁') or contains(text(),'下一章')])[last()]",
-                    pageE: '#nr',
+                    pageE: '.play-title, #nr',
                     replaceE: '.operate',
                     scrollD: 2000
                 },
