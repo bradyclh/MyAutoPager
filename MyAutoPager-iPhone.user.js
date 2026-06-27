@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.2
+// @version      1.3.3
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -281,6 +281,37 @@
                 var all = document.querySelectorAll('.txt_tcontent');
                 if (all.length > 1 && all[0].style.fontSize) {
                     for (var i = 1; i < all.length; i++) all[i].style.fontSize = all[0].style.fontSize;
+                }
+            }
+        },
+        qimao: {
+            host: 'qimao.com',
+            // 只匹配真正的章節閱讀頁，避免在書庫/書籍詳情頁無謂啟用
+            url: /^\/(reader\/index\/\d+|shuku\/\d+-)/,
+            pager: { nextL: "(//div[contains(@class,'reader-footer')]//a[contains(text(),'下一章') or contains(text(),'下一页') or contains(text(),'下一頁')])[last()]", pageE: '.chapter-title, .chapter-detail-article', replaceE: '.reader-footer', scrollD: 2000 },
+            afterPage: function() {
+                var all = document.querySelectorAll('.chapter-detail-article');
+                if (!all.length) return;
+                var last = all[all.length - 1];
+                // 付費牆偵測：免費試讀範圍外的章節以 <div class="qm-canvas-txt"> 渲染，正文無 <p>，
+                // 但標題與下一章連結仍在，會導致無限附加空章節。偵測到即移除空章節並停止翻頁。
+                if (last.querySelector('.qm-canvas-txt') || last.querySelectorAll('p').length === 0) {
+                    if (all.length > 1) last.remove();
+                    var titles = document.querySelectorAll('.chapter-title');
+                    if (titles.length > 1) titles[titles.length - 1].remove();
+                    document.querySelectorAll('.reader-footer a').forEach(function(a) {
+                        if (/下一章|下一页|下一頁/.test(a.textContent)) a.remove();
+                    });
+                    return;
+                }
+                // 正常頁：把首章的 font-XX class 同步到後續插入的內容
+                if (all.length > 1) {
+                    var fontClass = (all[0].className.match(/font-\d+/) || [])[0];
+                    if (fontClass) {
+                        for (var i = 1; i < all.length; i++) {
+                            all[i].className = all[i].className.replace(/\bfont-\d+\b/, '').trim() + ' ' + fontClass;
+                        }
+                    }
                 }
             }
         }

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.3
+// @version      1.2.4
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -404,6 +404,54 @@
                         var all = document.querySelectorAll('.txt_tcontent');
                         if (all.length > 1 && all[0].style.fontSize) {
                             for (var i = 1; i < all.length; i++) all[i].style.fontSize = all[0].style.fontSize;
+                        }
+                    }
+                }
+            },
+            qimao: {
+                host: '/(^|\\.)qimao\\.com$/',
+                // 只匹配真正的章節閱讀頁（reader/index/<書號> 或 shuku/<書號>-<章號>），
+                // 避免在書庫 /shuku/ 或書籍詳情 /shuku/<書號>/ 頁無謂啟用 popupBlock。
+                url: "/^\\/(reader\\/index\\/\\d+|shuku\\/\\d+-)/",
+                history: true, retry: 3000, popupBlock: true,
+                pager: {
+                    // 下一章按鈕位於 .reader-footer，連結到 /shuku/ 路徑
+                    nextL: "(//div[contains(@class,'reader-footer')]//a[contains(text(),'下一章') or contains(text(),'下一页') or contains(text(),'下一頁')])[last()]",
+                    // 載入章節標題（.chapter-title）與正文（.chapter-detail-article，含字體 class）
+                    pageE: '.chapter-title, .chapter-detail-article',
+                    replaceE: '.reader-footer',
+                    scrollD: 2000
+                },
+                function: {
+                    // keepText: '.article' 讓 cleanContent 不對正文段落套用促銷關鍵字刪除，
+                    // 避免誤刪含「VIP」等字樣的短句正文（七猫正文一句一個 <p>）。
+                    bF: function(pageE) { return cleanContent(pageE, {keepText: '.article'}); },
+                    aF: function() {
+                        var all = document.querySelectorAll('.chapter-detail-article');
+                        if (!all.length) return;
+                        var last = all[all.length - 1];
+                        // 付費牆偵測：七猫對免費試讀範圍外的章節以 <div class="qm-canvas-txt"> 渲染，
+                        // .chapter-detail-article 內無 <p> 正文，但 .chapter-title 與下一章連結仍在，
+                        // 若不處理引擎會無限附加「只有標題的空章節」。偵測到即移除空章節並停止翻頁。
+                        if (last.querySelector('.qm-canvas-txt') || last.querySelectorAll('p').length === 0) {
+                            if (all.length > 1) last.remove();
+                            var titles = document.querySelectorAll('.chapter-title');
+                            if (titles.length > 1) titles[titles.length - 1].remove();
+                            // 斷開 live footer 的下一章連結 → getNextE 從 live DOM 讀不到 → 乾淨停止
+                            document.querySelectorAll('.reader-footer a').forEach(function(a) {
+                                if (/下一章|下一页|下一頁/.test(a.textContent)) a.remove();
+                            });
+                            return;
+                        }
+                        // 正常頁：七猫字體大小由 .chapter-detail-article 上的 font-XX class 控制，
+                        // XHR 取得的新頁為預設值；把首章的 font-XX class 複製到後續插入的內容。
+                        if (all.length > 1) {
+                            var fontClass = (all[0].className.match(/font-\d+/) || [])[0];
+                            if (fontClass) {
+                                for (var i = 1; i < all.length; i++) {
+                                    all[i].className = all[i].className.replace(/\bfont-\d+\b/, '').trim() + ' ' + fontClass;
+                                }
+                            }
                         }
                     }
                 }
@@ -1444,8 +1492,11 @@
 
     // 清除非文字內容（小說閱讀專用）
     // 移除廣告、圖片、iframe、腳本等非文字元素，以及站點推廣文字，保留純文字閱讀體驗
-    function cleanContent(pageE) {
+    // opts.keepText（CSS 選擇器）：該選擇器命中的正文容器內節點，跳過「推廣關鍵字」刪除，
+    // 避免誤刪含 VIP 等字樣的短句正文；未傳入時行為與舊版完全相同（向後相容）。
+    function cleanContent(pageE, opts) {
         var removeList = 'iframe, img, script, style, link, ins, noscript, ad, video, audio, canvas, svg, object, embed, form, input, button, select, textarea';
+        var keepText = opts && opts.keepText;
         pageE.forEach(function(el) {
             // 移除非文字元素
             el.querySelectorAll(removeList).forEach(function(node) { node.remove(); });
@@ -1458,6 +1509,8 @@
                 var txt = node.textContent.trim();
                 // 移除空元素（無文字、無子元素）
                 if (!txt && node.children.length === 0) { node.remove(); return; }
+                // 正文容器內的節點不套用推廣關鍵字刪除（保護純文字正文）
+                if (keepText && node.closest && node.closest(keepText)) return;
                 // 只對短文字元素檢查推廣關鍵字（避免誤刪包含正文的大容器）
                 if (txt.length < 200 && (txt.indexOf('溫馨提示') > -1 || txt.indexOf('VIP') > -1 || txt.indexOf('免廣告') > -1 || txt.indexOf('加入書架') > -1 || txt.indexOf('搜書名') > -1)) { node.remove(); return; }
             });
