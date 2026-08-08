@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.4
+// @version      1.3.5
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -24,6 +24,8 @@
 // @match        *://*.uuread.tw/*
 // @match        *://tw.hjwzw.com/*
 // @match        *://www.hjwzw.com/*
+// @match        *://*.thepaperbooks.com/*
+// @connect      thepaperbooks.com
 // @noframes
 // ==/UserScript==
 
@@ -152,8 +154,12 @@
 
     function cleanContent(elements, opts) {
         var keepText = opts && opts.keepText;
+        // keepImg：圖片本身即內容的站點（如書籍封面）保留 <img>
+        var removeTags = (opts && opts.keepImg)
+            ? REMOVE_TAGS.split(',').filter(function(t) { return t !== 'img'; }).join(',')
+            : REMOVE_TAGS;
         elements.forEach(function(el) {
-            el.querySelectorAll(REMOVE_TAGS).forEach(function(n) { n.remove(); });
+            el.querySelectorAll(removeTags).forEach(function(n) { n.remove(); });
             stripPopupTriggers(el);
             el.querySelectorAll('div, p').forEach(function(node) {
                 if (node.className && AD_CLASS_RE.test(node.className)) { node.remove(); return; }
@@ -349,6 +355,23 @@
                     if (first && first.querySelector('a[href*="/Book/"]')) first.remove();
                 });
             }
+        },
+        thepaperbooks: {
+            // 論文書籍聚合站。此站沒有連載章節，「下一篇」取自站方的
+            // 「除了X，大家也想知道這些：」推薦清單（唯一的 ul.list-group），
+            // 推薦目標多半位於其他子網域，靠 GM_xmlhttpRequest 跨域取得。
+            host: 'thepaperbooks.com',
+            url: /^\/(read\/\d+|article\/)/,
+            pager: {
+                nextL: 'ul.list-group li a',
+                // 主欄 .col-lg-8 的直接子元素，排除廣告載體與兩份清單，其餘即文章本體
+                pageE: "//div[contains(@class,'col-lg-8')]/*[not(contains(@class,'lazyhtml')) and not(@id='div-onead-draft') and not(starts-with(@id,'juksy')) and not(.//ul[contains(@class,'list-group')]) and not(.//h3[contains(@class,'widget-title')])]",
+                // 推薦清單換成新頁的，nextL 才會指向再下一篇而非原地打轉
+                replaceE: "//div[contains(@class,'entry-bottom')][.//ul[contains(@class,'list-group')]]",
+                scrollD: 2000
+            },
+            // 書籍封面是此站內容的一部分，不可連同廣告圖一起清掉
+            cleanOpts: { keepImg: true }
         }
     };
 

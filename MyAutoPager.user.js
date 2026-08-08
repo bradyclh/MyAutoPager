@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.5
+// @version      1.2.6
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -18,6 +18,7 @@
 // @grant        GM.info
 // @grant        window.onurlchange
 // @grant        unsafeWindow
+// @connect      thepaperbooks.com
 // @license      GPL-3.0
 // @run-at       document-end
 // @exclude      https://*.taobao.com/*
@@ -490,6 +491,41 @@
                         // keepText 讓 cleanContent 不對正文段落套用促銷關鍵字刪除（正文一句一個 <p>，
                         // 短句若含「VIP」等字樣會被誤刪）。
                         return cleanContent(pageE, {keepText: 'div[style*="text-indent"]'});
+                    }
+                }
+            },
+            thepaperbooks: {
+                // 論文書籍聚合站。此站沒有連載章節，「下一篇」取自站方的
+                // 「除了X，大家也想知道這些：」推薦清單（唯一的 ul.list-group）。
+                host: '/(^|\\.)thepaperbooks\\.com$/',
+                // 兩種內容頁形式：/read/<id>/ 與 /article/<關鍵字>
+                url: "/^\\/(read\\/\\d+|article\\/)/",
+                // 推薦的下一篇位於其他子網域（sport → lawgovernment → arts …），
+                // 原生 XHR 會被 CORS 擋，必須改走 GM_xmlhttpRequest。
+                gmxhr: true,
+                // 下一篇跨 origin，addHistory 的 pushState 會拋 SecurityError，
+                // 且該呼叫不在 try/catch 內，會中斷後續的 replaceE 步驟。
+                history: false,
+                retry: 3000, popupBlock: true,
+                pager: {
+                    nextL: 'ul.list-group li a',
+                    // 主欄 .col-lg-8 的直接子元素，排除廣告載體（lazyhtml / onead / juksy）
+                    // 與兩份清單（目錄 h3.widget-title、推薦清單 ul.list-group），
+                    // 其餘即文章本體：標題、摘要、書籍與論文區塊、影片說明。
+                    pageE: "//div[contains(@class,'col-lg-8')]/*[not(contains(@class,'lazyhtml')) and not(@id='div-onead-draft') and not(starts-with(@id,'juksy')) and not(.//ul[contains(@class,'list-group')]) and not(.//h3[contains(@class,'widget-title')])]",
+                    // 推薦清單換成新頁的，nextL 才會指向再下一篇而非原地打轉
+                    replaceE: "//div[contains(@class,'entry-bottom')][.//ul[contains(@class,'list-group')]]",
+                    scrollD: 2000
+                },
+                function: {
+                    // 不用 cleanContent：它會移除 <img>，而書籍封面是此站內容的一部分。
+                    // 改為只清掉廣告載體與腳本，並保留彈窗防護。
+                    bF: function(pageE) {
+                        pageE.forEach(function(el) {
+                            el.querySelectorAll('iframe, script, ins, noscript, embed, object, [id^="div-onead"], [id^="juksy"], .lazyhtml').forEach(function(n) { n.remove(); });
+                            if (popupBlockEnabled) stripPopupTriggers(el);
+                        });
+                        return pageE;
                     }
                 }
             },
