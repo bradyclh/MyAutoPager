@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.8
+// @version      1.3.9
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -361,7 +361,7 @@
             // 「除了X，大家也想知道這些：」推薦清單（唯一的 ul.list-group），
             // 推薦目標多半位於其他子網域，靠 GM_xmlhttpRequest 跨域取得。
             host: 'thepaperbooks.com',
-            url: /^\/(read\/\d+|article\/)/,
+            url: /^\/(read\/\d+|article\/|share\.html)/,
             pager: {
                 // 推薦清單在 live DOM 會被過濾擴充或站方廣告腳本改掉（桌面版實測），
                 // 不依賴 live DOM：首頁以同源 fetch 抓自身原始 HTML 解析一次，

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.10
+// @version      1.2.11
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -502,8 +502,11 @@
                 // 論文書籍聚合站。此站沒有連載章節，「下一篇」取自站方的
                 // 「除了X，大家也想知道這些：」推薦清單（唯一的 ul.list-group）。
                 host: '/(^|\\.)thepaperbooks\\.com$/',
-                // 兩種內容頁形式：/read/<id>/ 與 /article/<關鍵字>
-                url: "/^\\/(read\\/\\d+|article\\/)/",
+                // 三種內容頁形式：/read/<id>/、/article/<關鍵字>，以及 share.html
+                // ——使用者實測：站方 JS（疑似反廣告攔截）會把頂層頁換成殼，
+                // 真正的文章渲染在 share.html?t=read iframe 內（完整版型），
+                // 腳本須在該 iframe 中運作才能插到使用者實際閱讀的位置。
+                url: "/^\\/(read\\/\\d+|article\\/|share\\.html)/",
                 // 推薦的下一篇位於其他子網域（sport → lawgovernment → arts …），
                 // 原生 XHR 會被 CORS 擋，必須改走 GM_xmlhttpRequest。
                 gmxhr: true,
@@ -522,6 +525,16 @@
                     // 首頁以 GM 請求抓自身原始 HTML 解析一次，之後每頁由 bF 從
                     // XHR 回應文件提取，存於 window.__tpbNext。
                     nextL: function() {
+                        // 殼層防護：頂層頁被站方 JS 換成殼（無主欄容器）時本框架
+                        // 停用，翻頁由 share.html 內容 iframe 中的腳本實例接手，
+                        // 避免殼層無限重試 + 洗版錯誤
+                        if (!document.querySelector('.col-lg-8')) {
+                            if (!window.__tpbShellLogged) {
+                                window.__tpbShellLogged = true;
+                                console.info('[MyAutoPager] 本框架無主欄容器（殼層頁），停用翻頁；內容框架（share.html）將接手');
+                            }
+                            return '';
+                        }
                         if (window.__tpbNext === undefined) {
                             window.__tpbNext = null;   // 佔位，防止重複啟動
                             console.info('[MyAutoPager] 初始化：抓取本頁原始 HTML 解析推薦清單...');
