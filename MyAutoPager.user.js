@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.11
+// @version      1.2.12
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -499,92 +499,38 @@
                 }
             },
             thepaperbooks: {
-                // 論文書籍聚合站。此站沒有連載章節，「下一篇」取自站方的
-                // 「除了X，大家也想知道這些：」推薦清單（唯一的 ul.list-group）。
+                // 小說站（8book 系）。伺服器對爬蟲/無頭瀏覽器偽裝（cloaking）成
+                // 論文書籍關鍵字農場頁；真實瀏覽器中由內嵌混淆 script 渲染出
+                // 小說閱讀器：標題 #subtitle、內文 #text（單一大 <p>）、
+                // 上下導覽 .read-top-set / .read_bottom（含「上一篇/章節列表/下一篇」）。
+                // XHR 取回的 HTML 中 #text 為空（內文只能由該 script 在瀏覽器渲染），
+                // 故用 type 6：隱藏 iframe 載入下一章（同源 ?<章節號>），
+                // 待站方 JS 渲染完成後自 iframe 文件擷取插入。
                 host: '/(^|\\.)thepaperbooks\\.com$/',
-                // 三種內容頁形式：/read/<id>/、/article/<關鍵字>，以及 share.html
-                // ——使用者實測：站方 JS（疑似反廣告攔截）會把頂層頁換成殼，
-                // 真正的文章渲染在 share.html?t=read iframe 內（完整版型），
-                // 腳本須在該 iframe 中運作才能插到使用者實際閱讀的位置。
-                url: "/^\\/(read\\/\\d+|article\\/|share\\.html)/",
-                // 推薦的下一篇位於其他子網域（sport → lawgovernment → arts …），
-                // 原生 XHR 會被 CORS 擋，必須改走 GM_xmlhttpRequest。
-                gmxhr: true,
-                // 下一篇跨 origin，addHistory 的 pushState 會拋 SecurityError，
-                // 且該呼叫不在 try/catch 內，會中斷後續的 replaceE 步驟。
-                history: false,
-                // 單頁 225KB，行動網路下預設 5 秒可能不夠
-                xhrTimeout: 10000,
-                // initSite 的 popupBlock 清理也會套用：原始頁的書籍封面不可清掉
-                cleanOpts: { keepImg: true },
-                retry: 3000, popupBlock: true,
+                url: "/^\\/read\\/\\d+/",
+                history: true, retry: 3000, popupBlock: true,
+                // initSite 的 popupBlock 清理保護單一大 <p> 正文
+                cleanOpts: { keepText: '#text' },
                 pager: {
-                    // 使用者實測：推薦清單在 live DOM 會被改掉（內容過濾擴充清除
-                    // 交叉推薦區塊，或站方廣告腳本改寫——原始 HTML 的 ul.list-group
-                    // 內部就塞著 div-onead-draft 廣告位）。故不依賴 live DOM：
-                    // 首頁以 GM 請求抓自身原始 HTML 解析一次，之後每頁由 bF 從
-                    // XHR 回應文件提取，存於 window.__tpbNext。
-                    nextL: function() {
-                        // 殼層防護：頂層頁被站方 JS 換成殼（無主欄容器）時本框架
-                        // 停用，翻頁由 share.html 內容 iframe 中的腳本實例接手，
-                        // 避免殼層無限重試 + 洗版錯誤
-                        if (!document.querySelector('.col-lg-8')) {
-                            if (!window.__tpbShellLogged) {
-                                window.__tpbShellLogged = true;
-                                console.info('[MyAutoPager] 本框架無主欄容器（殼層頁），停用翻頁；內容框架（share.html）將接手');
-                            }
-                            return '';
-                        }
-                        if (window.__tpbNext === undefined) {
-                            window.__tpbNext = null;   // 佔位，防止重複啟動
-                            console.info('[MyAutoPager] 初始化：抓取本頁原始 HTML 解析推薦清單...');
-                            GM_xmlhttpRequest({
-                                url: location.href, method: 'GET', responseType: 'arraybuffer', timeout: 10000,
-                                onload: function(r) {
-                                    try {
-                                        var doc = new DOMParser().parseFromString(new TextDecoder('utf-8').decode(r.response), 'text/html');
-                                        window.__tpbNext = pickUnseenLink(doc, '.entry-bottom ul.list-group li a[href^="http"]') || null;
-                                        console.info('[MyAutoPager] 下一篇（來自原始 HTML）：', window.__tpbNext || '（無）');
-                                    } catch (e) { console.error('[MyAutoPager] 解析原始 HTML 失敗', e); }
-                                },
-                                onerror: function(r) { window.__tpbNext = undefined; console.warn('[MyAutoPager] 抓取原始 HTML 失敗，滾動可重試', r); },
-                                ontimeout: function() { window.__tpbNext = undefined; }
-                            });
-                            return '';   // 本次滾動先返回，解析完成後下次滾動觸發
-                        }
-                        return window.__tpbNext || '';
-                    },
-                    // 主欄 .col-lg-8 的直接子元素，排除廣告載體（lazyhtml / onead / juksy）
-                    // 與兩份清單（目錄 h3.widget-title、推薦清單 ul.list-group），
-                    // 其餘即文章本體：標題、摘要、書籍與論文區塊、影片說明。
-                    // 此選擇器僅用於「從回應文件提取內容」（原始 HTML，結構穩定）。
-                    pageE: "//div[contains(@class,'col-lg-8')]/*[not(contains(@class,'lazyhtml')) and not(@id='div-onead-draft') and not(starts-with(@id,'juksy')) and not(.//ul[contains(@class,'list-group')]) and not(.//h3[contains(@class,'widget-title')])]",
-                    // 插入錨點與 pageE 脫鉤：使用者實測站方 in-read 廣告腳本會重新
-                    // 包裝 .col-lg-8 的直接子元素，上述 XPath 在 live DOM 會全數
-                    // 落空（toE undefined）。改插入主欄容器尾端——容器本身不會被
-                    // 廣告腳本移除，重包子元素也不影響。
-                    insertP: ['.col-lg-8', 3],
-                    // 推薦清單換成新頁的，nextL 才會指向再下一篇而非原地打轉
-                    replaceE: "//div[contains(@class,'entry-bottom')][.//ul[contains(@class,'list-group')]]",
+                    type: 6,
+                    nextL: "(//a[contains(text(),'下一篇')])[last()]",
+                    pageE: '#subtitle, #text',
+                    replaceE: '.read-top-set, .read_bottom',
+                    // 等待 iframe 內混淆 script 渲染內文
+                    loadTime: 1500,
                     scrollD: 2000
                 },
                 function: {
-                    // 不用 cleanContent：它會移除 <img>，而書籍封面是此站內容的一部分。
-                    // 改為只清掉廣告載體與腳本，並保留彈窗防護。
                     bF: function(pageE) {
-                        // 此時 pageE 仍屬於 XHR 回應文件（未插入），從該文件提取
-                        // 再下一篇——過濾擴充動不到原始回應，來源穩定
-                        if (pageE.length && pageE[0].ownerDocument) {
-                            var seen = window.__apSeenLinks = window.__apSeenLinks || {};
-                            if (curSite.pageUrl) seen[curSite.pageUrl.split('#')[0].replace(/\/$/, '')] = 1;
-                            window.__tpbNext = pickUnseenLink(pageE[0].ownerDocument, '.entry-bottom ul.list-group li a[href^="http"]') || null;
-                            console.info('[MyAutoPager] 下一篇（來自回應）：', window.__tpbNext || '（無未讀推薦，將停止）');
+                        // iframe 若拿到未渲染/偽裝版（#text 為空——站方對高頻請求
+                        // 會降級供應），放棄本次插入交由引擎重試，避免插入空章節
+                        var txt = pageE.filter(function(el) { return el.id === 'text'; })[0];
+                        if (!txt || txt.textContent.replace(/\s+/g, '').length < 50) {
+                            console.warn('[MyAutoPager] 下一章內文尚未渲染（可能為偽裝/降級頁），放棄本次擷取');
+                            return [];
                         }
-                        pageE.forEach(function(el) {
-                            el.querySelectorAll('iframe, script, ins, noscript, embed, object, [id^="div-onead"], [id^="juksy"], .lazyhtml').forEach(function(n) { n.remove(); });
-                            if (popupBlockEnabled) stripPopupTriggers(el);
-                        });
-                        return pageE;
+                        // 擷取內容可能已被站方後插廣告容器，清理；keepText 保護正文
+                        return cleanContent(pageE, {keepText: '#text'});
                     }
                 }
             },
@@ -1040,7 +986,11 @@
             } else if (curSite.pager.type === 2) {
                 clickNextButton();
             } else if (curSite.pager.type === 6) {
-                intervalPause(); checkURL(iframeExtract);
+                // 不可先呼叫 intervalPause()：它會把 pausePage 設為 false，
+                // 而 iframeExtract 開頭的 `if (!pausePage) return` 會直接返回，
+                // 導致 type 6 永遠不動作。iframeExtract 自身即以 pausePage
+                // 為「載入中」鎖（進入時設 false、擷取完成設回 true）。
+                checkURL(iframeExtract);
             }
         });
     }
@@ -1437,6 +1387,19 @@
             // 5. 執行 bF 插入前函數
             pageE = callBeforeHook(pageE);
 
+            // bF 回傳空陣列 = 明確放棄本次插入（如內容尚未渲染）。
+            // 不能繼續走成功分支：頁碼、歷史與 replaceE 會照常前進，
+            // 造成無聲跳章。改走與「取得主體元素失敗」相同的重試路徑。
+            if (!pageE || pageE.length === 0) {
+                if (curSite.retry) {
+                    console.warn('[MyAutoPager] bF 放棄本次內容，' + curSite.retry + ' 毫秒後可重試...');
+                    setTimeout(function(){ curSite.pageUrl = ''; }, curSite.retry);
+                } else {
+                    console.error('[MyAutoPager] bF 放棄本次內容...');
+                }
+                return;
+            }
+
             // 強制新分頁開啟連結（blank 4/5/6）
             if (curSite.blank === 4 || curSite.blank === 5 || curSite.blank === 6) {
                 pageE = forceTarget(pageE);
@@ -1655,19 +1618,6 @@
     // 移除廣告、圖片、iframe、腳本等非文字元素，以及站點推廣文字，保留純文字閱讀體驗
     // opts.keepText（CSS 選擇器）：該選擇器命中的正文容器內節點，跳過「推廣關鍵字」刪除，
     // 避免誤刪含 VIP 等字樣的短句正文；未傳入時行為與舊版完全相同（向後相容）。
-    // 從文件中挑出第一個未載入過的連結（跨頁去重，防 A↔B 推薦循環；
-    // 全部都看過則回傳空字串 → 乾淨停止）
-    function pickUnseenLink(doc, selector) {
-        var seen = window.__apSeenLinks = window.__apSeenLinks || {};
-        seen[location.href.split('#')[0].replace(/\/$/, '')] = 1;
-        var links = doc.querySelectorAll(selector);
-        for (var i = 0; i < links.length; i++) {
-            var h = (links[i].href || '').split('#')[0].replace(/\/$/, '');
-            if (h && !seen[h]) return links[i].href;
-        }
-        return '';
-    }
-
     function cleanContent(pageE, opts) {
         var removeList = 'iframe, img, script, style, link, ins, noscript, ad, video, audio, canvas, svg, object, embed, form, input, button, select, textarea';
         var keepText = opts && opts.keepText;
