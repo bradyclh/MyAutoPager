@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.6
+// @version      1.2.7
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -414,6 +414,8 @@
                 // 只匹配真正的章節閱讀頁（reader/index/<書號> 或 shuku/<書號>-<章號>），
                 // 避免在書庫 /shuku/ 或書籍詳情 /shuku/<書號>/ 頁無謂啟用 popupBlock。
                 url: "/^\\/(reader\\/index\\/\\d+|shuku\\/\\d+-)/",
+                // initSite 清理原始頁時同樣保護正文短句
+                cleanOpts: { keepText: '.article' },
                 history: true, retry: 3000, popupBlock: true,
                 pager: {
                     // 下一章按鈕位於 .reader-footer，連結到 /shuku/ 路徑
@@ -462,6 +464,8 @@
                 host: '/^(tw|www)\\.hjwzw\\.com$/',
                 // 只匹配章節閱讀頁 /Book/Read/<書號>,<章號>
                 url: "/^\\/Book\\/Read\\/\\d+,\\d+/",
+                // initSite 清理原始頁時同樣保護正文短句
+                cleanOpts: { keepText: 'div[style*="text-indent"]' },
                 history: true, retry: 3000, popupBlock: true,
                 pager: {
                     // 底部導覽列「上一章 | 目錄 | 下一章」；最後一章該處為純文字「末頁」而非連結，
@@ -506,6 +510,10 @@
                 // 下一篇跨 origin，addHistory 的 pushState 會拋 SecurityError，
                 // 且該呼叫不在 try/catch 內，會中斷後續的 replaceE 步驟。
                 history: false,
+                // 單頁 225KB，行動網路下預設 5 秒可能不夠
+                xhrTimeout: 10000,
+                // initSite 的 popupBlock 清理也會套用：原始頁的書籍封面不可清掉
+                cleanOpts: { keepImg: true },
                 retry: 3000, popupBlock: true,
                 pager: {
                     nextL: 'ul.list-group li a',
@@ -1245,8 +1253,12 @@
     // ---- XHR 取得下一頁 ----
 
     function onXhrError(url, detail) {
-        console.log('[MyAutoPager] XHR error URL:', url, detail);
-        GM_notification({text: '❌ 取得下一頁失敗...', timeout: 5000});
+        // 與 timeout 相同：3 秒後允許再次滾動重試，否則一次失敗就永久卡住
+        setTimeout(function() { curSite.pageUrl = ''; }, 3000);
+        console.error('[MyAutoPager] XHR error URL:', url, detail);
+        var reason = '';
+        if (detail && typeof detail === 'object') reason = detail.error || detail.statusText || '';
+        GM_notification({text: '❌ 取得下一頁失敗' + (reason ? '（' + reason + '）' : '') + '，可 3 秒後再次滾動重試...', timeout: 5000});
     }
     function onXhrTimeout(url, detail) {
         setTimeout(function() { curSite.pageUrl = ''; }, 3000);
@@ -1265,27 +1277,44 @@
             if (curSite.xRequestedWith === true) headers['x-requested-with'] = 'XMLHttpRequest';
             if (curSite.noReferer !== true) headers.Referer = location.href;
 
-            GM_xmlhttpRequest({
-                url: url,
-                method: 'GET',
-                responseType: 'arraybuffer',
-                headers: headers,
-                cookiePartition: {
-                    topLevelSite: location.origin
-                },
-                timeout: 5000,
-                onload: function (response) {
-                    try {
-                        processElements(createDocumentByString(
-                            (new TextDecoder((document.characterSet || document.charset || document.inputEncoding))).decode(response.response)
-                        ));
-                    } catch (e) {
-                        console.error('[MyAutoPager] 處理下一頁內容時出錯\n', e, '\nURL：' + url, '\n最終 URL：' + response.finalUrl, '\n狀態：' + response.statusText);
-                    }
-                },
-                onerror: function (response) { onXhrError(url, response); },
-                ontimeout: function (response) { onXhrTimeout(url, response); }
-            });
+            // cookiePartition 僅 Tampermonkey 5.1+ 支援，且此參數在 Chrome 上未經上游實戰
+            // （上游只在 Firefox 走此路徑）。帶著它同步拋錯或非同步失敗時，
+            // 自動改用精簡參數重試一次，避免單一參數不相容就讓翻頁整個死掉。
+            var gmFire = function(withPartition) {
+                var opts = {
+                    url: url,
+                    method: 'GET',
+                    responseType: 'arraybuffer',
+                    headers: headers,
+                    timeout: curSite.xhrTimeout || 5000,
+                    onload: function (response) {
+                        try {
+                            processElements(createDocumentByString(
+                                (new TextDecoder((document.characterSet || document.charset || document.inputEncoding))).decode(response.response)
+                            ));
+                        } catch (e) {
+                            console.error('[MyAutoPager] 處理下一頁內容時出錯\n', e, '\nURL：' + url, '\n最終 URL：' + response.finalUrl, '\n狀態：' + response.statusText);
+                        }
+                    },
+                    onerror: function (response) {
+                        if (withPartition) {
+                            console.warn('[MyAutoPager] GM_xmlhttpRequest 帶 cookiePartition 失敗，改用精簡參數重試', response);
+                            gmFire(false);
+                        } else {
+                            onXhrError(url, response);
+                        }
+                    },
+                    ontimeout: function (response) { onXhrTimeout(url, response); }
+                };
+                if (withPartition) opts.cookiePartition = { topLevelSite: location.origin };
+                GM_xmlhttpRequest(opts);
+            };
+            try {
+                gmFire(true);
+            } catch (e) {
+                console.warn('[MyAutoPager] GM_xmlhttpRequest 拋出例外，改用精簡參數重試', e);
+                try { gmFire(false); } catch (e2) { onXhrError(url, e2); }
+            }
         } else {
             const xhr = new XMLHttpRequest();
             xhr.open('GET', url, true);
@@ -1570,6 +1599,10 @@
     function cleanContent(pageE, opts) {
         var removeList = 'iframe, img, script, style, link, ins, noscript, ad, video, audio, canvas, svg, object, embed, form, input, button, select, textarea';
         var keepText = opts && opts.keepText;
+        // keepImg：圖片本身即內容的站點（如書籍封面）保留 <img>
+        if (opts && opts.keepImg) {
+            removeList = removeList.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t !== 'img'; }).join(', ');
+        }
         pageE.forEach(function(el) {
             // 移除非文字元素
             el.querySelectorAll(removeList).forEach(function(node) { node.remove(); });
@@ -1975,7 +2008,9 @@
         if (popupBlockEnabled) {
             installClickGuard();
             if (curSite && curSite.pager && curSite.pager.pageE) {
-                try { cleanContent(getAll(curSite.pager.pageE)); } catch (e) {}
+                // 帶上規則的 cleanOpts，原始頁與插入頁的清理行為才一致
+                // （否則 keepImg/keepText 站點的第一頁會被通用規則誤清）
+                try { cleanContent(getAll(curSite.pager.pageE), curSite.cleanOpts); } catch (e) {}
             }
         }
         registerMenuCommand();
