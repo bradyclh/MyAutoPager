@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.7
+// @version      1.3.8
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -378,7 +378,11 @@
                     return window.__tpbNext || '';
                 },
                 // 主欄 .col-lg-8 的直接子元素，排除廣告載體與兩份清單，其餘即文章本體
+                // （僅用於從回應文件提取；live DOM 會被 in-read 廣告腳本重包）
                 pageE: "//div[contains(@class,'col-lg-8')]/*[not(contains(@class,'lazyhtml')) and not(@id='div-onead-draft') and not(starts-with(@id,'juksy')) and not(.//ul[contains(@class,'list-group')]) and not(.//h3[contains(@class,'widget-title')])]",
+                // 插入錨點脫鉤：live DOM 子元素被廣告腳本重包後上述 XPath 會落空，
+                // 改插入主欄容器尾端
+                insertP: ['.col-lg-8', 3],
                 // 推薦清單換成新頁的，nextL 才會指向再下一篇而非原地打轉
                 replaceE: "//div[contains(@class,'entry-bottom')][.//ul[contains(@class,'list-group')]]",
                 scrollD: 2000

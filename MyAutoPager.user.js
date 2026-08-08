@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.9
+// @version      1.2.10
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -544,7 +544,13 @@
                     // 主欄 .col-lg-8 的直接子元素，排除廣告載體（lazyhtml / onead / juksy）
                     // 與兩份清單（目錄 h3.widget-title、推薦清單 ul.list-group），
                     // 其餘即文章本體：標題、摘要、書籍與論文區塊、影片說明。
+                    // 此選擇器僅用於「從回應文件提取內容」（原始 HTML，結構穩定）。
                     pageE: "//div[contains(@class,'col-lg-8')]/*[not(contains(@class,'lazyhtml')) and not(@id='div-onead-draft') and not(starts-with(@id,'juksy')) and not(.//ul[contains(@class,'list-group')]) and not(.//h3[contains(@class,'widget-title')])]",
+                    // 插入錨點與 pageE 脫鉤：使用者實測站方 in-read 廣告腳本會重新
+                    // 包裝 .col-lg-8 的直接子元素，上述 XPath 在 live DOM 會全數
+                    // 落空（toE undefined）。改插入主欄容器尾端——容器本身不會被
+                    // 廣告腳本移除，重包子元素也不影響。
+                    insertP: ['.col-lg-8', 3],
                     // 推薦清單換成新頁的，nextL 才會指向再下一篇而非原地打轉
                     replaceE: "//div[contains(@class,'entry-bottom')][.//ul[contains(@class,'list-group')]]",
                     scrollD: 2000
