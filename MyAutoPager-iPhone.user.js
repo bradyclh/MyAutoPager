@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.3
+// @version      1.3.4
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -22,6 +22,8 @@
 // @match        *://*.69shuba.com/*
 // @match        *://uuread.tw/*
 // @match        *://*.uuread.tw/*
+// @match        *://tw.hjwzw.com/*
+// @match        *://www.hjwzw.com/*
 // @noframes
 // ==/UserScript==
 
@@ -148,7 +150,8 @@
         });
     }
 
-    function cleanContent(elements) {
+    function cleanContent(elements, opts) {
+        var keepText = opts && opts.keepText;
         elements.forEach(function(el) {
             el.querySelectorAll(REMOVE_TAGS).forEach(function(n) { n.remove(); });
             stripPopupTriggers(el);
@@ -156,6 +159,8 @@
                 if (node.className && AD_CLASS_RE.test(node.className)) { node.remove(); return; }
                 var txt = node.textContent.trim();
                 if (!txt && node.children.length === 0) { node.remove(); return; }
+                // 正文容器內的節點不套用推廣關鍵字刪除（保護純文字正文）
+                if (keepText && node.closest && node.closest(keepText)) return;
                 if (txt.length < 200) {
                     for (var i = 0; i < PROMO_KEYWORDS.length; i++) {
                         if (txt.indexOf(PROMO_KEYWORDS[i]) > -1) { node.remove(); return; }
@@ -314,6 +319,36 @@
                     }
                 }
             }
+        },
+        hjwzw: {
+            // 黃金屋中文桌面版（tw. / www.）。手機站 t. / m. 的下一章只存在於頁面 JS 變數，
+            // 版面也不同，不在此規則範圍；url 條件同時把那兩個子網域排除在外。
+            host: 'hjwzw.com',
+            url: /^\/Book\/Read\/\d+,\d+/,
+            pager: {
+                // 最後一章底部是純文字「末頁」而非連結，取不到 href 即自然停止翻頁
+                nextL: "(//a[contains(text(),'下一章')])[last()]",
+                // 版面全用 inline style，正文容器無 class/id：標題取唯一的 <h1>，
+                // 正文取帶 text-indent 的 div；同款 style 的第二個 div 只有「請記住本站域名」
+                // 頁尾，以字數門檻排除（不能用 [1]，否則插入後插入點會固定在首章而錯位）。
+                pageE: "//h1 | //div[contains(@style,'text-indent: 2em') and string-length(normalize-space(.)) > 100]",
+                replaceE: "//div[contains(@style,'width: 1000px') and contains(@style,'font-size: 20px')]",
+                scrollD: 2000
+            },
+            // 正文一句一個 <p>，短句若含「VIP」等字樣會被推廣關鍵字規則誤刪
+            cleanOpts: { keepText: 'div[style*="text-indent"]' },
+            beforePage: function(pageE) {
+                pageE.forEach(function(el) {
+                    if (!el.getAttribute || (el.getAttribute('style') || '').indexOf('text-indent') === -1) return;
+                    // 每章正文開頭固定重複「請記住本站域名: 黃金屋」與「書名 章節名」兩行，移除之
+                    if (!el.querySelector('p')) return;   // 無 <p> 的異常版面不動，避免整章被清空
+                    while (el.firstChild && !(el.firstChild.nodeType === 1 && el.firstChild.tagName === 'P')) {
+                        el.firstChild.remove();
+                    }
+                    var first = el.querySelector('p');
+                    if (first && first.querySelector('a[href*="/Book/"]')) first.remove();
+                });
+            }
         }
     };
 
@@ -405,7 +440,8 @@
         var toE = (insertP[1] === 5) ? toE5pop(getAll(insertP[0])) : getOne(insertP[0]);
 
         if (pageE.length > 0 && toE) {
-            cleanContent(pageE);
+            if (curSite.beforePage) curSite.beforePage(pageE);
+            cleanContent(pageE, curSite.cleanOpts);
 
             var addTo = (function(n) {
                 switch(n) { case 1: return 'beforebegin'; case 2: return 'afterbegin'; case 3: case 6: return 'beforeend'; default: return 'afterend'; }
@@ -441,7 +477,7 @@
             }
 
             // 清理所有章節（含原始頁）
-            cleanContent(getAll(curSite.pager.pageE));
+            cleanContent(getAll(curSite.pager.pageE), curSite.cleanOpts);
 
             if (curSite.afterPage) curSite.afterPage();
         } else if (curSite.pager.retry) {

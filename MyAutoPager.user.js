@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.4
+// @version      1.2.5
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -453,6 +453,43 @@
                                 }
                             }
                         }
+                    }
+                }
+            },
+            hjwzw: {
+                // 黃金屋中文（繁體 tw. / 簡體 www.）。手機站 t. / m. 版面與下一章機制不同，不在此規則範圍。
+                host: '/^(tw|www)\\.hjwzw\\.com$/',
+                // 只匹配章節閱讀頁 /Book/Read/<書號>,<章號>
+                url: "/^\\/Book\\/Read\\/\\d+,\\d+/",
+                history: true, retry: 3000, popupBlock: true,
+                pager: {
+                    // 底部導覽列「上一章 | 目錄 | 下一章」；最後一章該處為純文字「末頁」而非連結，
+                    // 取不到 href 即自然停止翻頁，不需額外的結尾偵測。
+                    nextL: "(//a[contains(text(),'下一章')])[last()]",
+                    // 站方版面全用 inline style，正文容器沒有 class/id：
+                    // 標題取頁面上唯一的 <h1>，正文取帶 text-indent 的 div。
+                    // 同款 style 的 div 有兩個，第二個只有「請記住本站域名」頁尾，
+                    // 以字數門檻排除（不用 [1] 位置條件，否則插入後仍指向首章而插錯位置）。
+                    pageE: "//h1 | //div[contains(@style,'text-indent: 2em') and string-length(normalize-space(.)) > 100]",
+                    replaceE: "//div[contains(@style,'width: 1000px') and contains(@style,'font-size: 20px')]",
+                    scrollD: 2000
+                },
+                function: {
+                    bF: function(pageE) {
+                        pageE.forEach(function(el) {
+                            if (!el.getAttribute || (el.getAttribute('style') || '').indexOf('text-indent') === -1) return;
+                            // 每章正文開頭固定重複「請記住本站域名: 黃金屋」與「書名 章節名」兩行，
+                            // 插入時移除，避免夾在連續章節之間打斷閱讀。
+                            if (!el.querySelector('p')) return;   // 無 <p> 的異常版面不動，避免整章被清空
+                            while (el.firstChild && !(el.firstChild.nodeType === 1 && el.firstChild.tagName === 'P')) {
+                                el.firstChild.remove();
+                            }
+                            var first = el.querySelector('p');
+                            if (first && first.querySelector('a[href*="/Book/"]')) first.remove();
+                        });
+                        // keepText 讓 cleanContent 不對正文段落套用促銷關鍵字刪除（正文一句一個 <p>，
+                        // 短句若含「VIP」等字樣會被誤刪）。
+                        return cleanContent(pageE, {keepText: 'div[style*="text-indent"]'});
                     }
                 }
             },
