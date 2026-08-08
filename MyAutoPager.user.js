@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.12
+// @version      1.2.13
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -58,6 +58,14 @@
 
 (function() {
     'use strict';
+
+    // 不在自身的擷取 iframe（type 6）內運作：Tampermonkey 會把腳本注入
+    // 子框架，而擷取流程會捲動 iframe 內容，觸發框內實例自我翻頁——
+    // 造成巢狀 iframe、章節跳號與互相干擾。
+    try {
+        if (window.name === 'Autopage_iframe') return;
+        if (window.frameElement && window.frameElement.id === 'Autopage_iframe') return;
+    } catch (e) { /* 跨域 frameElement 取用失敗可忽略，window.name 已涵蓋 */ }
 
 
     // ========== 彈窗攔截：條件式閘道 ==========
@@ -513,7 +521,20 @@
                 cleanOpts: { keepText: '#text' },
                 pager: {
                     type: 6,
-                    nextL: "(//a[contains(text(),'下一篇')])[last()]",
+                    // 殼層防護：使用者環境可能是「殼層頁 + 閱讀器 iframe」雙框架，
+                    // 兩者的 URL 都是 /read/ 形式、都會匹配本規則。只有閱讀器
+                    // 框架有 #text；殼層框架安靜停用，避免空轉重試洗版。
+                    nextL: function() {
+                        if (!document.querySelector('#text')) {
+                            if (!window.__tpbShellLogged) {
+                                window.__tpbShellLogged = true;
+                                console.info('[MyAutoPager] 本框架無閱讀器容器（殼層頁），停用翻頁；閱讀器框架將接手');
+                            }
+                            return '';
+                        }
+                        var a = getXpath("(//a[contains(text(),'下一篇')])[last()]");
+                        return (a && a.href && a.href.slice(0, 4) === 'http') ? a.href : '';
+                    },
                     pageE: '#subtitle, #text',
                     replaceE: '.read-top-set, .read_bottom',
                     // 等待 iframe 內混淆 script 渲染內文
@@ -1022,6 +1043,8 @@
 
         if (!existing) {
             iframe.id = 'Autopage_iframe';
+            // name 讓框內的腳本實例（含跨域）能透過 window.name 自我識別並退出
+            iframe.name = 'Autopage_iframe';
             insStyle('iframe#Autopage_iframe {position: absolute !important; top: -9999px !important; left: -9999px !important; width: 100% !important; height: 100% !important; border: none !important; z-index: -999 !important;}');
         }
 
