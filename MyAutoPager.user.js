@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.13
+// @version      1.2.14
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -552,6 +552,29 @@
                         }
                         // 擷取內容可能已被站方後插廣告容器，清理；keepText 保護正文
                         return cleanContent(pageE, {keepText: '#text'});
+                    },
+                    aF: function() {
+                        // 同步站方閱讀記錄：站方腳本只在頂層視窗寫 localStorage
+                        // 'history'（值格式 items:[{id,url,eps}]，每書一筆、記最後
+                        // 閱讀章節；目錄頁的「瀏覽記錄」讀取此值），我們的章節
+                        // 經 iframe 載入不會被記錄，插入後在頂層照原格式補寫。
+                        try {
+                            var book = (location.pathname.match(/read\/(\d+)/) || [])[1];
+                            var ch = (curSite.pageUrl.match(/\?(\d+)/) || [])[1];
+                            if (!book || !ch) return;
+                            var subs = document.querySelectorAll('#subtitle');
+                            var eps = subs.length ? subs[subs.length - 1].textContent.trim() : '';
+                            var items = [];
+                            try { items = JSON.parse((localStorage.getItem('history') || 'items:[]').replace(/^items:/, '')); } catch (e2) {}
+                            // 站方以 8book.com 網址記錄（sport. 子網域上亦然），沿用其格式
+                            var url = 'https://8book.com/read/' + book + '/?' + ch + '_1';
+                            var hit = false;
+                            for (var i = 0; i < items.length; i++) {
+                                if (String(items[i].id) === book) { items[i].url = url; items[i].eps = eps; hit = true; break; }
+                            }
+                            if (!hit) items.unshift({ id: book, url: url, eps: eps });
+                            localStorage.setItem('history', 'items:' + JSON.stringify(items));
+                        } catch (e) { /* 記錄失敗不影響翻頁 */ }
                     }
                 }
             },
@@ -1050,19 +1073,47 @@
 
         iframe.onload = function() {
             if (!curSite.pager.loadTime) curSite.pager.loadTime = 300;
+            // 站方/廣告腳本可能把 iframe 再導航（onload 會多次觸發）：
+            // 先清掉上一輪的計時器，避免疊加
+            if (iframe._apTimer) { clearInterval(iframe._apTimer); iframe._apTimer = null; }
             let step = 0, timer = setInterval(function() {
-                let sh = (iframe.contentWindow.document.documentElement.scrollHeight || iframe.contentWindow.document.body.scrollHeight) / 10;
-                iframe.contentWindow.scrollTo(0, 999999);
-                iframe.contentWindow.scrollTo(0, sh * step);
-                if (++step === 12) {
-                    clearInterval(timer);
-                    processElements(iframe.contentWindow.document);
+                try {
+                    let sh = (iframe.contentWindow.document.documentElement.scrollHeight || iframe.contentWindow.document.body.scrollHeight) / 10;
+                    iframe.contentWindow.scrollTo(0, 999999);
+                    iframe.contentWindow.scrollTo(0, sh * step);
+                    if (++step === 12) {
+                        clearInterval(timer); iframe._apTimer = null;
+                        if (iframe._apWatchdog) { clearTimeout(iframe._apWatchdog); iframe._apWatchdog = null; }
+                        processElements(iframe.contentWindow.document);
+                        pausePage = true;
+                    }
+                } catch (e) {
+                    // iframe 被導航至跨域等 → contentWindow 取用拋錯。
+                    // 未保護時 clearInterval 永遠不會執行、pausePage 卡在 false，
+                    // 翻頁從此死鎖。中止本輪並允許稍後重試。
+                    clearInterval(timer); iframe._apTimer = null;
+                    console.warn('[MyAutoPager] iframe 擷取中斷（可能被頁面腳本導航），稍後可重試', e);
                     pausePage = true;
+                    setTimeout(function() { curSite.pageUrl = ''; }, curSite.retry || 3000);
                 }
             }, curSite.pager.loadTime / 10);
+            iframe._apTimer = timer;
         };
 
         iframe.src = src.replace(/#.+$/, '');
+
+        // 看門狗：onload 遲遲不觸發（網路卡住）或流程異常時，
+        // 解除 pausePage 死鎖並允許重試
+        if (iframe._apWatchdog) clearTimeout(iframe._apWatchdog);
+        iframe._apWatchdog = setTimeout(function() {
+            iframe._apWatchdog = null;
+            if (!pausePage) {
+                console.warn('[MyAutoPager] iframe 載入逾時，重置後可再次滾動重試');
+                if (iframe._apTimer) { clearInterval(iframe._apTimer); iframe._apTimer = null; }
+                pausePage = true;
+                setTimeout(function() { curSite.pageUrl = ''; }, 1000);
+            }
+        }, (curSite.pager.loadTime || 300) + 20000);
 
         if (!existing) document.documentElement.appendChild(iframe);
     }
