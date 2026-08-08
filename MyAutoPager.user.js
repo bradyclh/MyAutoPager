@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.8
+// @version      1.2.9
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -516,10 +516,31 @@
                 cleanOpts: { keepImg: true },
                 retry: 3000, popupBlock: true,
                 pager: {
-                    // 錨定到推薦清單所在的 entry-bottom 並要求 http 開頭：
-                    // 真實環境下站方 JS 可能注入其他 list-group（Bootstrap 通用 class），
-                    // 裸選擇器拿到第一個若非推薦清單（或首連結是 #），會無聲卡住
-                    nextL: '.entry-bottom ul.list-group li a[href^="http"]',
+                    // 使用者實測：推薦清單在 live DOM 會被改掉（內容過濾擴充清除
+                    // 交叉推薦區塊，或站方廣告腳本改寫——原始 HTML 的 ul.list-group
+                    // 內部就塞著 div-onead-draft 廣告位）。故不依賴 live DOM：
+                    // 首頁以 GM 請求抓自身原始 HTML 解析一次，之後每頁由 bF 從
+                    // XHR 回應文件提取，存於 window.__tpbNext。
+                    nextL: function() {
+                        if (window.__tpbNext === undefined) {
+                            window.__tpbNext = null;   // 佔位，防止重複啟動
+                            console.info('[MyAutoPager] 初始化：抓取本頁原始 HTML 解析推薦清單...');
+                            GM_xmlhttpRequest({
+                                url: location.href, method: 'GET', responseType: 'arraybuffer', timeout: 10000,
+                                onload: function(r) {
+                                    try {
+                                        var doc = new DOMParser().parseFromString(new TextDecoder('utf-8').decode(r.response), 'text/html');
+                                        window.__tpbNext = pickUnseenLink(doc, '.entry-bottom ul.list-group li a[href^="http"]') || null;
+                                        console.info('[MyAutoPager] 下一篇（來自原始 HTML）：', window.__tpbNext || '（無）');
+                                    } catch (e) { console.error('[MyAutoPager] 解析原始 HTML 失敗', e); }
+                                },
+                                onerror: function(r) { window.__tpbNext = undefined; console.warn('[MyAutoPager] 抓取原始 HTML 失敗，滾動可重試', r); },
+                                ontimeout: function() { window.__tpbNext = undefined; }
+                            });
+                            return '';   // 本次滾動先返回，解析完成後下次滾動觸發
+                        }
+                        return window.__tpbNext || '';
+                    },
                     // 主欄 .col-lg-8 的直接子元素，排除廣告載體（lazyhtml / onead / juksy）
                     // 與兩份清單（目錄 h3.widget-title、推薦清單 ul.list-group），
                     // 其餘即文章本體：標題、摘要、書籍與論文區塊、影片說明。
@@ -532,6 +553,14 @@
                     // 不用 cleanContent：它會移除 <img>，而書籍封面是此站內容的一部分。
                     // 改為只清掉廣告載體與腳本，並保留彈窗防護。
                     bF: function(pageE) {
+                        // 此時 pageE 仍屬於 XHR 回應文件（未插入），從該文件提取
+                        // 再下一篇——過濾擴充動不到原始回應，來源穩定
+                        if (pageE.length && pageE[0].ownerDocument) {
+                            var seen = window.__apSeenLinks = window.__apSeenLinks || {};
+                            if (curSite.pageUrl) seen[curSite.pageUrl.split('#')[0].replace(/\/$/, '')] = 1;
+                            window.__tpbNext = pickUnseenLink(pageE[0].ownerDocument, '.entry-bottom ul.list-group li a[href^="http"]') || null;
+                            console.info('[MyAutoPager] 下一篇（來自回應）：', window.__tpbNext || '（無未讀推薦，將停止）');
+                        }
                         pageE.forEach(function(el) {
                             el.querySelectorAll('iframe, script, ins, noscript, embed, object, [id^="div-onead"], [id^="juksy"], .lazyhtml').forEach(function(n) { n.remove(); });
                             if (popupBlockEnabled) stripPopupTriggers(el);
@@ -1607,6 +1636,19 @@
     // 移除廣告、圖片、iframe、腳本等非文字元素，以及站點推廣文字，保留純文字閱讀體驗
     // opts.keepText（CSS 選擇器）：該選擇器命中的正文容器內節點，跳過「推廣關鍵字」刪除，
     // 避免誤刪含 VIP 等字樣的短句正文；未傳入時行為與舊版完全相同（向後相容）。
+    // 從文件中挑出第一個未載入過的連結（跨頁去重，防 A↔B 推薦循環；
+    // 全部都看過則回傳空字串 → 乾淨停止）
+    function pickUnseenLink(doc, selector) {
+        var seen = window.__apSeenLinks = window.__apSeenLinks || {};
+        seen[location.href.split('#')[0].replace(/\/$/, '')] = 1;
+        var links = doc.querySelectorAll(selector);
+        for (var i = 0; i < links.length; i++) {
+            var h = (links[i].href || '').split('#')[0].replace(/\/$/, '');
+            if (h && !seen[h]) return links[i].href;
+        }
+        return '';
+    }
+
     function cleanContent(pageE, opts) {
         var removeList = 'iframe, img, script, style, link, ins, noscript, ad, video, audio, canvas, svg, object, embed, form, input, button, select, textarea';
         var keepText = opts && opts.keepText;

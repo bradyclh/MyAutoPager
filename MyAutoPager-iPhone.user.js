@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.6
+// @version      1.3.7
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -363,9 +363,20 @@
             host: 'thepaperbooks.com',
             url: /^\/(read\/\d+|article\/)/,
             pager: {
-                // 錨定推薦清單所在容器並要求 http 開頭，避免站方 JS 注入的
-                // 其他 list-group（Bootstrap 通用 class）搶走 getOne 的第一命中
-                nextL: '.entry-bottom ul.list-group li a[href^="http"]',
+                // 推薦清單在 live DOM 會被過濾擴充或站方廣告腳本改掉（桌面版實測），
+                // 不依賴 live DOM：首頁以同源 fetch 抓自身原始 HTML 解析一次，
+                // 之後每頁由 beforePage 從 XHR 回應文件提取
+                nextL: function() {
+                    if (window.__tpbNext === undefined) {
+                        window.__tpbNext = null;   // 佔位，防止重複啟動
+                        fetch(location.href).then(function(r) { return r.text(); }).then(function(html) {
+                            var doc = new DOMParser().parseFromString(html, 'text/html');
+                            window.__tpbNext = pickUnseenLink(doc, '.entry-bottom ul.list-group li a[href^="http"]') || null;
+                        }).catch(function() { window.__tpbNext = undefined; });
+                        return '';
+                    }
+                    return window.__tpbNext || '';
+                },
                 // 主欄 .col-lg-8 的直接子元素，排除廣告載體與兩份清單，其餘即文章本體
                 pageE: "//div[contains(@class,'col-lg-8')]/*[not(contains(@class,'lazyhtml')) and not(@id='div-onead-draft') and not(starts-with(@id,'juksy')) and not(.//ul[contains(@class,'list-group')]) and not(.//h3[contains(@class,'widget-title')])]",
                 // 推薦清單換成新頁的，nextL 才會指向再下一篇而非原地打轉
@@ -373,7 +384,15 @@
                 scrollD: 2000
             },
             // 書籍封面是此站內容的一部分，不可連同廣告圖一起清掉
-            cleanOpts: { keepImg: true }
+            cleanOpts: { keepImg: true },
+            beforePage: function(pageE) {
+                // pageE 仍屬 XHR 回應文件，從該文件提取再下一篇（過濾擴充動不到）
+                if (pageE.length && pageE[0].ownerDocument) {
+                    var seen = window.__apSeenLinks = window.__apSeenLinks || {};
+                    if (curSite.pageUrl) seen[curSite.pageUrl.split('#')[0].replace(/\/$/, '')] = 1;
+                    window.__tpbNext = pickUnseenLink(pageE[0].ownerDocument, '.entry-bottom ul.list-group li a[href^="http"]') || null;
+                }
+            }
         }
     };
 
@@ -416,10 +435,28 @@
     // ========== 翻頁引擎 ==========
 
     function getNextUrl() {
+        // 支援函數形式的 nextL（不依賴 live DOM 的站點，如 thepaperbooks）
+        if (typeof curSite.pager.nextL === 'function') {
+            var u = '';
+            try { u = curSite.pager.nextL() || ''; } catch (e) {}
+            return (u && u.slice(0, 4) === 'http' && u !== curSite.pageUrl) ? u : '';
+        }
         var next = getOne(curSite.pager.nextL);
         if (!next || !next.href || next.href.slice(0, 4) !== 'http') return '';
         if (next.getAttribute('href')[0] === '#') return '';
         return next.href === curSite.pageUrl ? '' : next.href;
+    }
+
+    // 從文件中挑出第一個未載入過的連結（跨頁去重，防 A↔B 推薦循環）
+    function pickUnseenLink(doc, selector) {
+        var seen = window.__apSeenLinks = window.__apSeenLinks || {};
+        seen[location.href.split('#')[0].replace(/\/$/, '')] = 1;
+        var links = doc.querySelectorAll(selector);
+        for (var i = 0; i < links.length; i++) {
+            var h = (links[i].href || '').split('#')[0].replace(/\/$/, '');
+            if (h && !seen[h]) return links[i].href;
+        }
+        return '';
     }
 
     function fetchNextPage(url) {
