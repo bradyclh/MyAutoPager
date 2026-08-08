@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.7
+// @version      1.2.8
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -516,7 +516,10 @@
                 cleanOpts: { keepImg: true },
                 retry: 3000, popupBlock: true,
                 pager: {
-                    nextL: 'ul.list-group li a',
+                    // 錨定到推薦清單所在的 entry-bottom 並要求 http 開頭：
+                    // 真實環境下站方 JS 可能注入其他 list-group（Bootstrap 通用 class），
+                    // 裸選擇器拿到第一個若非推薦清單（或首連結是 #），會無聲卡住
+                    nextL: '.entry-bottom ul.list-group li a[href^="http"]',
                     // 主欄 .col-lg-8 的直接子元素，排除廣告載體（lazyhtml / onead / juksy）
                     // 與兩份清單（目錄 h3.widget-title、推薦清單 ul.list-group），
                     // 其餘即文章本體：標題、摘要、書籍與論文區塊、影片說明。
@@ -1125,7 +1128,13 @@
                 console.error('[MyAutoPager] nextL JS 代碼有誤：\n', curSite.pager.nextL + '\n\n', e);
             }
         } else if (getNextE_()) {
+            curSite._noNextLogged = false;
             func(curSite.pageUrl);
+        } else if (!curSite._noNextLogged && curSite.pageUrl === '') {
+            // pageUrl 為空 = 非「載入中」，是初始就取不到連結 → 留一次診斷線索
+            // （載入中或已到末頁時 pageUrl 非空，不會誤報）
+            curSite._noNextLogged = true;
+            console.info('[MyAutoPager] nextL 未命中有效連結，翻頁未觸發：', curSite.pager.nextL);
         }
     }
 
@@ -1268,6 +1277,7 @@
 
     // Type 1：XHR 取得下一頁內容（Chrome/Firefox 雙路徑）
     function fetchNextPage(url) {
+        console.info('[MyAutoPager] 取得下一頁：', url);
         // Firefox 或規則指定 gmxhr 時使用 GM_xmlhttpRequest + cookiePartition
         // Chrome 使用原生 XMLHttpRequest 以保留跨域 cookie
         if (curSite.gmxhr || navigator.userAgent.includes('Firefox')) {
@@ -1418,6 +1428,7 @@
 
             // 8. 頁碼 +1
             pageNumIncrement();
+            console.info('[MyAutoPager] 已插入下一頁內容：', curSite.pageUrl);
 
             // 9. 新增歷史記錄
             if (curSite.history === undefined) {

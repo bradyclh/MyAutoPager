@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.5
+// @version      1.3.6
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -363,7 +363,9 @@
             host: 'thepaperbooks.com',
             url: /^\/(read\/\d+|article\/)/,
             pager: {
-                nextL: 'ul.list-group li a',
+                // 錨定推薦清單所在容器並要求 http 開頭，避免站方 JS 注入的
+                // 其他 list-group（Bootstrap 通用 class）搶走 getOne 的第一命中
+                nextL: '.entry-bottom ul.list-group li a[href^="http"]',
                 // 主欄 .col-lg-8 的直接子元素，排除廣告載體與兩份清單，其餘即文章本體
                 pageE: "//div[contains(@class,'col-lg-8')]/*[not(contains(@class,'lazyhtml')) and not(@id='div-onead-draft') and not(starts-with(@id,'juksy')) and not(.//ul[contains(@class,'list-group')]) and not(.//h3[contains(@class,'widget-title')])]",
                 // 推薦清單換成新頁的，nextL 才會指向再下一篇而非原地打轉
