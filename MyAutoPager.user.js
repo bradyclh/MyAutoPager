@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.14
+// @version      1.2.15
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -576,6 +576,27 @@
                             localStorage.setItem('history', 'items:' + JSON.stringify(items));
                         } catch (e) { /* 記錄失敗不影響翻頁 */ }
                     }
+                }
+            },
+
+            ixdzs: {
+                // 愛下電子書（繁中 .hk/.tw、簡中 ixdzs8.com，同一平台）
+                host: '/(^|\\.)(ixdzs\\.hk|ixdzs\\.tw|ixdzs8\\.com)$/',
+                url: "/^\\/read\\/\\d+\\/p\\d+\\.html/",
+                history: true, retry: 3000, popupBlock: true,
+                // 正文一句一個 <p>，keepText 防推廣關鍵字誤刪
+                cleanOpts: { keepText: '.page-content section' },
+                pager: {
+                    // 末章的下一章連結指向 end.html（完本頁），[href*="/p"] 排除之
+                    // → nextL 落空即乾淨停止
+                    nextL: 'a.chapter-next[href*="/p"]',
+                    // 含 <h3> 章節標題與 <section> 正文
+                    pageE: 'article.page-content',
+                    replaceE: '.page-turn',
+                    scrollD: 2000
+                },
+                function: {
+                    bF: function(pageE) { return cleanContent(pageE, {keepText: '.page-content section'}); }
                 }
             },
 

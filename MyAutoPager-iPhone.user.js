@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.10
+// @version      1.3.11
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -24,6 +24,12 @@
 // @match        *://*.uuread.tw/*
 // @match        *://tw.hjwzw.com/*
 // @match        *://www.hjwzw.com/*
+// @match        *://ixdzs.hk/*
+// @match        *://*.ixdzs.hk/*
+// @match        *://ixdzs.tw/*
+// @match        *://*.ixdzs.tw/*
+// @match        *://ixdzs8.com/*
+// @match        *://*.ixdzs8.com/*
 // @noframes
 // ==/UserScript==
 
@@ -353,6 +359,20 @@
                     if (first && first.querySelector('a[href*="/Book/"]')) first.remove();
                 });
             }
+        },
+        ixdzs: {
+            // 愛下電子書（繁中 .hk/.tw、簡中 ixdzs8.com，同一平台）
+            host: ['ixdzs.hk', 'ixdzs.tw', 'ixdzs8.com'],
+            url: /^\/read\/\d+\/p\d+\.html/,
+            pager: {
+                // 末章的下一章連結指向 end.html（完本頁），[href*="/p"] 排除之
+                nextL: 'a.chapter-next[href*="/p"]',
+                pageE: 'article.page-content',
+                replaceE: '.page-turn',
+                scrollD: 2000
+            },
+            // 正文一句一個 <p>，keepText 防推廣關鍵字誤刪
+            cleanOpts: { keepText: '.page-content section' }
         }
         // thepaperbooks（8book 系小說站）：真實內文由站方混淆 script 在瀏覽器
         // 渲染（伺服器對非瀏覽器請求偽裝成關鍵字農場頁），需要 iframe 擷取
@@ -370,7 +390,10 @@
         var path = location.pathname + location.search;
         for (var key in rules) {
             var rule = rules[key];
-            if (host !== rule.host && host.indexOf('.' + rule.host) === -1) continue;
+            // host 支援字串或陣列（同一平台多網域，如 ixdzs 三站）
+            var hosts = Array.isArray(rule.host) ? rule.host : [rule.host];
+            var hostOk = hosts.some(function(h) { return host === h || host.indexOf('.' + h) !== -1; });
+            if (!hostOk) continue;
             if (rule.url && !rule.url.test(path)) continue;
             curSite = rule;
             curSite.pageUrl = '';
