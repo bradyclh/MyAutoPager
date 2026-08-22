@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.16
+// @version      1.2.17
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -335,8 +335,12 @@
         ['menu_history', '添加歷史記錄+修改地址/標題', '添加歷史記錄+修改地址/標題', true],
         ['menu_customRules', '自定義翻頁規則', '自定義翻頁規則', {}]
     ];
+    // 翻頁閘門由兩個獨立旗標組成，不可再合併為一個：
+    //   userPaused — 使用者意圖（頁碼按鈕左鍵切換），只有使用者能改
+    //   pagerBusy  — 機器狀態（interval 節流窗、type 6 iframe 擷取互斥），只有流程能改
+    // 兩者混用時，節流計時器會擦掉使用者的暫停、使用者點擊也會解開機器鎖。
     var menuId = [], curSite = {SiteTypeID: 0}, DBSite, DBSite2, DBSiteNow,
-        pausePage = true, pageNum = {now: 1, _now: 1},
+        userPaused = false, pagerBusy = false, pageNum = {now: 1, _now: 1},
         urlC = false, nowLocation = '', lp = location.pathname;
 
     // 初始化 GM 存儲
@@ -1002,11 +1006,11 @@
         }, 1000);
     }
 
-    // 翻頁間隔暫停控制
+    // 翻頁間隔節流（機器狀態；不動 userPaused，故不會擦掉使用者的暫停）
     function intervalPause() {
         if (curSite.pager && curSite.pager.interval) {
-            pausePage = false;
-            setTimeout(function() { pausePage = true; }, curSite.pager.interval);
+            pagerBusy = true;
+            setTimeout(function() { pagerBusy = false; }, curSite.pager.interval);
         }
     }
 
@@ -1024,8 +1028,8 @@
         curSite.pageUrl = '';
 
         windowScroll(function (direction, e) {
-            // 僅在向下滾動、未暫停、且 SiteTypeID > 0 時觸發
-            if (direction != 'down' || !pausePage || curSite.SiteTypeID == 0) return;
+            // 僅在向下滾動、使用者未暫停、流程不忙、且 SiteTypeID > 0 時觸發
+            if (direction != 'down' || userPaused || pagerBusy || curSite.SiteTypeID == 0) return;
 
             let scrollTop = document.documentElement.scrollTop || window.pageYOffset || document.body.scrollTop,
                 scrollHeight = window.innerHeight || document.documentElement.clientHeight,
@@ -1051,10 +1055,9 @@
             } else if (curSite.pager.type === 2) {
                 clickNextButton();
             } else if (curSite.pager.type === 6) {
-                // 不可先呼叫 intervalPause()：它會把 pausePage 設為 false，
-                // 而 iframeExtract 開頭的 `if (!pausePage) return` 會直接返回，
-                // 導致 type 6 永遠不動作。iframeExtract 自身即以 pausePage
-                // 為「載入中」鎖（進入時設 false、擷取完成設回 true）。
+                // 不呼叫 intervalPause()：iframeExtract 自身即以 pagerBusy 為
+                // 「擷取中」互斥鎖（進入時設 true、擷取結束設回 false），
+                // 若先開節流窗會讓它入口的 `if (pagerBusy) return` 直接退出。
                 checkURL(iframeExtract);
             }
         });
@@ -1079,8 +1082,8 @@
     }
     // Type 6 iframe 擷取（Task 5 實作）
     function iframeExtract(src) {
-        if (!pausePage) return;
-        pausePage = false;
+        if (pagerBusy) return;
+        pagerBusy = true;
 
         let existing = document.getElementById('Autopage_iframe');
         let iframe = existing || document.createElement('iframe');
@@ -1106,15 +1109,15 @@
                         clearInterval(timer); iframe._apTimer = null;
                         if (iframe._apWatchdog) { clearTimeout(iframe._apWatchdog); iframe._apWatchdog = null; }
                         processElements(iframe.contentWindow.document);
-                        pausePage = true;
+                        pagerBusy = false;
                     }
                 } catch (e) {
                     // iframe 被導航至跨域等 → contentWindow 取用拋錯。
-                    // 未保護時 clearInterval 永遠不會執行、pausePage 卡在 false，
+                    // 未保護時 clearInterval 永遠不會執行、pagerBusy 卡在 true，
                     // 翻頁從此死鎖。中止本輪並允許稍後重試。
                     clearInterval(timer); iframe._apTimer = null;
                     console.warn('[MyAutoPager] iframe 擷取中斷（可能被頁面腳本導航），稍後可重試', e);
-                    pausePage = true;
+                    pagerBusy = false;
                     setTimeout(function() { curSite.pageUrl = ''; }, curSite.retry || 3000);
                 }
             }, curSite.pager.loadTime / 10);
@@ -1124,14 +1127,14 @@
         iframe.src = src.replace(/#.+$/, '');
 
         // 看門狗：onload 遲遲不觸發（網路卡住）或流程異常時，
-        // 解除 pausePage 死鎖並允許重試
+        // 解除 pagerBusy 死鎖並允許重試
         if (iframe._apWatchdog) clearTimeout(iframe._apWatchdog);
         iframe._apWatchdog = setTimeout(function() {
             iframe._apWatchdog = null;
-            if (!pausePage) {
+            if (pagerBusy) {
                 console.warn('[MyAutoPager] iframe 載入逾時，重置後可再次滾動重試');
                 if (iframe._apTimer) { clearInterval(iframe._apTimer); iframe._apTimer = null; }
-                pausePage = true;
+                pagerBusy = false;
                 setTimeout(function() { curSite.pageUrl = ''; }, 1000);
             }
         }, (curSite.pager.loadTime || 300) + 20000);
@@ -1883,13 +1886,13 @@
             let Autopage_number = getCSS('#Autopage_number'), shadowRoot = Autopage_number.attachShadow({ mode: 'open' }); // 建立 Shadow DOM 避免網頁樣式影響頁碼元素
             shadowRoot.innerHTML = _style + _html; // 插入元素
 
-            if (curSite.pager && curSite.pager.type == 5) window.top.document.xiu_pausePage = pausePage;
+            if (curSite.pager && curSite.pager.type == 5) window.top.document.xiu_pausePage = !userPaused;
             status = getCSS('#Autopage_number_button', shadowRoot);
-            // 左鍵點擊事件（臨時暫停翻頁）
+            // 左鍵點擊事件（臨時暫停翻頁）；只動 userPaused，不影響進行中的機器鎖
             status.onclick = function(e) {
-                if (pausePage) { this.style.color = '#FF5722'; this.style.fontStyle = 'italic'; } else { this.style = ''; }
-                pausePage = !pausePage;
-                if (curSite.pager && curSite.pager.type == 5) window.top.document.xiu_pausePage = pausePage;
+                userPaused = !userPaused;
+                if (userPaused) { this.style.color = '#FF5722'; this.style.fontStyle = 'italic'; } else { this.style = ''; }
+                if (curSite.pager && curSite.pager.type == 5) window.top.document.xiu_pausePage = !userPaused;
                 e.preventDefault();
                 e.stopPropagation();
                 return false;

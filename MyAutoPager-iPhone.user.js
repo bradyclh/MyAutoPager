@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.12
+// @version      1.3.13
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -383,7 +383,12 @@
     // ========== 規則匹配 ==========
 
     var curSite = null;
-    var pausePage = true;
+    // 翻頁閘門由兩個獨立旗標組成，不可再合併為一個：
+    //   userPaused — 使用者意圖（頁碼按鈕點擊切換），只有使用者能改
+    //   pagerBusy  — 機器狀態（interval 節流窗），只有流程能改
+    // 兩者混用時，節流計時器會擦掉使用者的暫停、使用者點擊也會解開機器鎖。
+    var userPaused = false;
+    var pagerBusy = false;
     var pageNum = 1;
 
     function matchRule() {
@@ -558,9 +563,9 @@
         pageNumBtn = shadow.querySelector('#btn');
 
         pageNumBtn.addEventListener('click', function(e) {
-            pausePage = !pausePage;
-            this.style.color = pausePage ? '' : '#FF5722';
-            this.style.fontStyle = pausePage ? '' : 'italic';
+            userPaused = !userPaused;
+            this.style.color = userPaused ? '#FF5722' : '';
+            this.style.fontStyle = userPaused ? 'italic' : '';
             e.preventDefault();
             e.stopPropagation();
         });
@@ -595,15 +600,15 @@
 
             window.addEventListener('scroll', function() {
                 var st = window.pageYOffset || document.documentElement.scrollTop || 0;
-                if (st <= prevST || !pausePage) { prevST = st; return; }
+                if (st <= prevST || userPaused || pagerBusy) { prevST = st; return; }
                 prevST = st;
 
                 var vh = window.innerHeight;
                 var docH = document.documentElement.scrollHeight;
 
                 if (docH <= vh + st + scrollD) {
-                    pausePage = false;
-                    setTimeout(function() { pausePage = true; }, interval);
+                    pagerBusy = true;
+                    setTimeout(function() { pagerBusy = false; }, interval);
                     var url = getNextUrl();
                     if (url) fetchNextPage(url);
                 }
