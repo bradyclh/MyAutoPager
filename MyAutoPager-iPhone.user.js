@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.13
+// @version      1.3.14
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -562,27 +562,159 @@
 
         pageNumBtn = shadow.querySelector('#btn');
 
+        // 單擊＝暫停／恢復翻頁；快速點兩下＝啟動／停止自動捲頁。
+        // 第二擊會還原第一擊的暫停切換，所以單擊不需要 debounce、暫停仍是
+        // 即時反應，代價只是雙擊時暫停指示會閃一下。
+        var lastTapAt = 0, tapPrevPaused = false;
         pageNumBtn.addEventListener('click', function(e) {
-            userPaused = !userPaused;
-            this.style.color = userPaused ? '#FF5722' : '';
-            this.style.fontStyle = userPaused ? 'italic' : '';
             e.preventDefault();
             e.stopPropagation();
+            var now = performance.now();
+            if (now - lastTapAt < 320) {
+                lastTapAt = 0;
+                userPaused = tapPrevPaused;
+                paintPauseState(this);
+                asToggle();
+                return;
+            }
+            lastTapAt = now;
+            tapPrevPaused = userPaused;
+            userPaused = !userPaused;
+            paintPauseState(this);
         });
 
-        // 長按可禁用當前網站
-        var holdTimer = null;
-        pageNumBtn.addEventListener('touchstart', function() {
+        // 長按可禁用當前網站；自動捲頁中在按鈕上垂直滑動可調速
+        var holdTimer = null, swipeY = null;
+        pageNumBtn.addEventListener('touchstart', function(e) {
+            swipeY = (e.touches && e.touches[0]) ? e.touches[0].clientY : null;
             holdTimer = setTimeout(function() {
                 if (confirm('要對 ' + location.hostname + ' 禁用自動翻頁嗎？')) toggleDisable();
             }, 1500);
         });
-        pageNumBtn.addEventListener('touchend', function() { clearTimeout(holdTimer); });
-        pageNumBtn.addEventListener('touchmove', function() { clearTimeout(holdTimer); });
+        pageNumBtn.addEventListener('touchend', function() { clearTimeout(holdTimer); swipeY = null; });
+        pageNumBtn.addEventListener('touchmove', function(e) {
+            clearTimeout(holdTimer);
+            if (!autoScroll || swipeY === null) return;
+            var y = (e.touches && e.touches[0]) ? e.touches[0].clientY : null;
+            if (y === null) return;
+            var d = swipeY - y;
+            // 上滑加速、下滑減速；每滿 AS_SWIPE px 調一階並重設基準
+            if (Math.abs(d) >= AS_SWIPE) {
+                asSetSpeed(d > 0 ? AS_STEP : -AS_STEP);
+                swipeY = y;
+            }
+        });
     }
 
     function updatePageNumber() {
         if (pageNumBtn) pageNumBtn.textContent = pageNum;
+    }
+
+    // ========== 自動捲頁 ==========
+    // 與翻頁解耦：本模組只負責平滑捲動。捲動產生的 scroll 事件照常餵給
+    // startScrollWatch 的閘門，所以捲到頁底時會自然接續既有的無縫翻頁。
+
+    var AS_KEY = 'autoScrollSpeed';
+    var AS_MIN = 10, AS_MAX = 200, AS_STEP = 10, AS_SWIPE = 24, AS_IDLE_STOP = 30000;
+    var autoScroll = false, asSpeed = 40, asRaf = null, asLastTs = 0, asAcc = 0,
+        asIdleMs = 0, asLastY = -1, asLastH = -1;
+
+    function asClampSpeed(v) {
+        v = parseInt(v, 10);
+        if (isNaN(v)) return 40;
+        return v < AS_MIN ? AS_MIN : (v > AS_MAX ? AS_MAX : v);
+    }
+
+    function asLoadSpeed() {
+        try {
+            return GM.getValue(AS_KEY, 40).then(function(v) { asSpeed = asClampSpeed(v); })
+                .catch(function() {});
+        } catch (e) { return Promise.resolve(); }
+    }
+
+    function asSaveSpeed() { try { GM.setValue(AS_KEY, asSpeed); } catch (e) {} }
+
+    // 只動 backgroundColor，避免與暫停指示（color / fontStyle）互相蓋掉
+    function asIndicate() {
+        if (!pageNumBtn) return;
+        pageNumBtn.style.backgroundColor = autoScroll ? '#A5D6A7' : '';
+    }
+
+    function paintPauseState(btn) {
+        btn.style.color = userPaused ? '#FF5722' : '';
+        btn.style.fontStyle = userPaused ? 'italic' : '';
+    }
+
+    function asStep(ts) {
+        if (!autoScroll) { asRaf = null; return; }
+        if (!asLastTs) asLastTs = ts;
+        var dt = ts - asLastTs;
+        asLastTs = ts;
+        // 分頁切回前景或長時間停頓（rAF 在背景分頁被凍結）：丟棄該幀的位移，
+        // 否則會一次跳掉一大段
+        if (dt < 0 || dt > 250) dt = 0;
+
+        // 亞像素累積：低速時仍平順，不用 setInterval + scrollBy(0,1) 那種抖動做法
+        asAcc += asSpeed * dt / 1000;
+        var px = Math.floor(asAcc);
+        if (px >= 1) { asAcc -= px; window.scrollBy(0, px); }
+
+        // 停滯＝位置與文件高度都不變（既沒捲動、也沒有新內容進來）。
+        // 只看位置無法區分「在頁底等下一頁」和「讀完了」，但下一頁落地時
+        // scrollHeight 會變，所以加上高度就能讓等待中的抓取繼續延命。
+        // 門檻取 30 秒，遠大於本引擎 GM_xmlhttpRequest 的 8 秒逾時與重試
+        // 延遲，免得把慢速網路誤判成讀完。y 取整：頁面縮放下 pageYOffset
+        // 可能帶小數，逐幀抖動會讓計時永遠歸零、rAF 在書末永久空轉。
+        var y = Math.round(window.pageYOffset || document.documentElement.scrollTop || 0);
+        var h = document.documentElement.scrollHeight;
+        if (y === asLastY && h === asLastH) {
+            asIdleMs += dt;
+            if (asIdleMs >= AS_IDLE_STOP) { asStop('停滯 ' + (AS_IDLE_STOP / 1000) + ' 秒'); return; }
+        } else { asIdleMs = 0; asLastY = y; asLastH = h; }
+
+        asRaf = requestAnimationFrame(asStep);
+    }
+
+    function asStart() {
+        if (autoScroll) return;
+        autoScroll = true;
+        asLastTs = 0; asAcc = 0; asIdleMs = 0; asLastY = -1; asLastH = -1;
+        asIndicate();
+        console.info('[MyAutoPager] 自動捲頁開始：' + asSpeed + ' px/秒');
+        asRaf = requestAnimationFrame(asStep);
+    }
+
+    function asStop(reason) {
+        if (!autoScroll) return;
+        autoScroll = false;
+        if (asRaf) { cancelAnimationFrame(asRaf); asRaf = null; }
+        asIndicate();
+        console.info('[MyAutoPager] 自動捲頁停止' + (reason ? '：' + reason : ''));
+    }
+
+    function asToggle() { autoScroll ? asStop('使用者') : asStart(); }
+
+    function asSetSpeed(delta) {
+        var v = asClampSpeed(asSpeed + delta);
+        if (v === asSpeed) return;
+        asSpeed = v;
+        asSaveSpeed();
+        console.info('[MyAutoPager] 自動捲頁速度：' + asSpeed + ' px/秒');
+    }
+
+    // 真人介入即停。程式化 scrollBy 不會產生 touchmove，
+    // 所以不需要額外的「這是腳本自己捲的」旗標。
+    function asInstallInterrupt() {
+        ['touchmove', 'wheel'].forEach(function(ev) {
+            window.addEventListener(ev, function(e) {
+                if (!autoScroll) return;
+                var t = e.target;
+                // 頁碼按鈕自身的操作＝調速手勢，不算介入
+                // （shadow DOM 事件在 window 層會重定向到 host）
+                if (t && t.nodeType === 1 && t.closest && t.closest('#Autopage_number')) return;
+                asStop('手動介入');
+            }, { passive: true });
+        });
     }
 
     // ========== 滾動偵測 ==========
@@ -629,6 +761,8 @@
         try { cleanContent(getAll(curSite.pager.pageE)); } catch (e) {}
         installClickGuard();
         createPageNumber();
+        asLoadSpeed();
+        asInstallInterrupt();
         startScrollWatch();
     });
 

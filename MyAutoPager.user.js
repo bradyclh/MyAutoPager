@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.17
+// @version      1.2.18
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -333,7 +333,8 @@
         ['menu_disable', '✅ 已啟用 (點擊對當前網站禁用)', '❌ 已禁用 (點擊對當前網站啟用)', []],
         ['menu_page_number', '顯示當前頁碼及點擊暫停翻頁', '顯示當前頁碼及點擊暫停翻頁', true],
         ['menu_history', '添加歷史記錄+修改地址/標題', '添加歷史記錄+修改地址/標題', true],
-        ['menu_customRules', '自定義翻頁規則', '自定義翻頁規則', {}]
+        ['menu_customRules', '自定義翻頁規則', '自定義翻頁規則', {}],
+        ['menu_autoScrollSpeed', '自動捲頁速度', '自動捲頁速度', 40]
     ];
     // 翻頁閘門由兩個獨立旗標組成，不可再合併為一個：
     //   userPaused — 使用者意圖（頁碼按鈕左鍵切換），只有使用者能改
@@ -1888,13 +1889,28 @@
 
             if (curSite.pager && curSite.pager.type == 5) window.top.document.xiu_pausePage = !userPaused;
             status = getCSS('#Autopage_number_button', shadowRoot);
-            // 左鍵點擊事件（臨時暫停翻頁）；只動 userPaused，不影響進行中的機器鎖
+            // 左鍵單擊＝臨時暫停翻頁（只動 userPaused，不影響進行中的機器鎖）；
+            // 快速點兩下＝啟動／停止自動捲頁。第二擊會還原第一擊的暫停切換，
+            // 所以單擊不需要 debounce、暫停仍是即時反應，代價只是雙擊時
+            // 暫停指示會閃一下。
+            let lastTapAt = 0, tapPrevPaused = false;
             status.onclick = function(e) {
-                userPaused = !userPaused;
-                if (userPaused) { this.style.color = '#FF5722'; this.style.fontStyle = 'italic'; } else { this.style = ''; }
-                if (curSite.pager && curSite.pager.type == 5) window.top.document.xiu_pausePage = !userPaused;
                 e.preventDefault();
                 e.stopPropagation();
+                const now = performance.now();
+                if (now - lastTapAt < 320) {
+                    lastTapAt = 0;
+                    userPaused = tapPrevPaused;
+                    paintPauseState(this);
+                    if (curSite.pager && curSite.pager.type == 5) window.top.document.xiu_pausePage = !userPaused;
+                    asToggle();
+                    return false;
+                }
+                lastTapAt = now;
+                tapPrevPaused = userPaused;
+                userPaused = !userPaused;
+                paintPauseState(this);
+                if (curSite.pager && curSite.pager.type == 5) window.top.document.xiu_pausePage = !userPaused;
                 return false;
             };
             // 右鍵點擊事件（回到頂部）
@@ -1924,6 +1940,106 @@
 
     // ========== UI：菜單 ==========
 
+    // ========== 自動捲頁 ==========
+    // 與翻頁解耦：本模組只負責平滑捲動。捲動產生的 scroll 事件照常餵給
+    // pageLoading() 的閘門，所以捲到頁底時會自然接續既有的無縫翻頁。
+
+    const AS_MIN = 10, AS_MAX = 200, AS_IDLE_STOP = 30000;
+    let autoScroll = false, asSpeed = 40, asRaf = null, asLastTs = 0, asAcc = 0,
+        asIdleMs = 0, asLastY = -1, asLastH = -1, asInstalled = false;
+
+    function asBtn() {
+        const host = getCSS('#Autopage_number');
+        const shadow = host && host.shadowRoot;
+        return shadow ? getCSS('#Autopage_number_button', shadow) : null;
+    }
+
+    function asClampSpeed(v) {
+        v = parseInt(v, 10);
+        if (isNaN(v)) return 40;
+        return v < AS_MIN ? AS_MIN : (v > AS_MAX ? AS_MAX : v);
+    }
+
+    // 只動 backgroundColor，避免與暫停指示（color / fontStyle）互相蓋掉
+    function asIndicate() {
+        const btn = asBtn();
+        if (btn) btn.style.backgroundColor = autoScroll ? '#A5D6A7' : '';
+    }
+
+    function paintPauseState(btn) {
+        btn.style.color = userPaused ? '#FF5722' : '';
+        btn.style.fontStyle = userPaused ? 'italic' : '';
+    }
+
+    function asStep(ts) {
+        if (!autoScroll) { asRaf = null; return; }
+        if (!asLastTs) asLastTs = ts;
+        let dt = ts - asLastTs;
+        asLastTs = ts;
+        // 分頁切回前景或長時間停頓（rAF 在背景分頁被凍結）：丟棄該幀的位移，
+        // 否則會一次跳掉一大段
+        if (dt < 0 || dt > 250) dt = 0;
+
+        // 亞像素累積：低速時仍平順，不用 setInterval + scrollBy(0,1) 那種抖動做法
+        asAcc += asSpeed * dt / 1000;
+        const px = Math.floor(asAcc);
+        if (px >= 1) { asAcc -= px; window.scrollBy(0, px); }
+
+        // 停滯＝位置與文件高度都不變（既沒捲動、也沒有新內容進來）。
+        // 只看位置無法區分「在頁底等下一頁」和「讀完了」，但下一頁落地時
+        // scrollHeight 會變，所以加上高度就能讓等待中的抓取繼續延命。
+        // 門檻取 30 秒，遠大於引擎自身的 XHR 逾時（8 秒）與重試延遲，
+        // 免得把慢速網路誤判成讀完。y 取整：頁面縮放下 pageYOffset 可能
+        // 帶小數，逐幀抖動會讓計時永遠歸零、rAF 在書末永久空轉。
+        const y = Math.round(window.pageYOffset || document.documentElement.scrollTop || 0);
+        const h = document.documentElement.scrollHeight;
+        if (y === asLastY && h === asLastH) {
+            asIdleMs += dt;
+            if (asIdleMs >= AS_IDLE_STOP) { asStop('停滯 ' + (AS_IDLE_STOP / 1000) + ' 秒'); return; }
+        } else { asIdleMs = 0; asLastY = y; asLastH = h; }
+
+        asRaf = requestAnimationFrame(asStep);
+    }
+
+    function asStart() {
+        if (autoScroll) return;
+        autoScroll = true;
+        asLastTs = 0; asAcc = 0; asIdleMs = 0; asLastY = -1; asLastH = -1;
+        asIndicate();
+        console.info('[MyAutoPager] 自動捲頁開始：' + asSpeed + ' px/秒');
+        asRaf = requestAnimationFrame(asStep);
+    }
+
+    function asStop(reason) {
+        if (!autoScroll) return;
+        autoScroll = false;
+        if (asRaf) { cancelAnimationFrame(asRaf); asRaf = null; }
+        asIndicate();
+        console.info('[MyAutoPager] 自動捲頁停止' + (reason ? '：' + reason : ''));
+    }
+
+    function asToggle() { autoScroll ? asStop('使用者') : asStart(); }
+
+    // 真人介入即停。程式化 scrollBy 不會產生 wheel / touchmove / keydown，
+    // 所以不需要額外的「這是腳本自己捲的」旗標。
+    function asInstallInterrupt() {
+        const stop = function(e) {
+            if (!autoScroll) return;
+            const t = e.target;
+            // 頁碼按鈕自身的操作不算介入（shadow DOM 事件會重定向到 host）
+            if (t && t.nodeType === 1 && t.closest && t.closest('#Autopage_number')) return;
+            asStop('手動介入');
+        };
+        window.addEventListener('wheel', stop, { passive: true });
+        window.addEventListener('touchmove', stop, { passive: true });
+        window.addEventListener('keydown', function(e) {
+            if (!autoScroll) return;
+            if ([' ', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', 'Escape'].indexOf(e.key) > -1) {
+                asStop('手動介入');
+            }
+        }, true);
+    }
+
     function registerMenuCommand() {
         menuId.forEach(id => { try { GM_unregisterMenuCommand(id); } catch(e){} });
         menuId = [];
@@ -1950,6 +2066,15 @@
         // 4. 自定義規則
         menuId.push(GM_registerMenuCommand('#️⃣ ' + menuAll[3][1], function() {
             customRules();
+        }));
+
+        // 5. 自動捲頁速度
+        menuId.push(GM_registerMenuCommand('▼ ' + menuAll[4][1] + '：' + asSpeed + ' px/秒', function() {
+            const v = prompt('自動捲頁速度（' + AS_MIN + '–' + AS_MAX + ' px/秒）\n\n在左側頁碼按鈕上快速點兩下即可啟動／停止自動捲頁。', asSpeed);
+            if (v === null) return;
+            asSpeed = asClampSpeed(v);
+            GM_setValue('menu_autoScrollSpeed', asSpeed);
+            registerMenuCommand();
         }));
     }
 
@@ -2133,8 +2258,17 @@
                 try { cleanContent(getAll(curSite.pager.pageE), curSite.cleanOpts); } catch (e) {}
             }
         }
+        // 自動捲頁只需初始化一次（SPA 導航會重進 initSite，不可重複掛監聽）；
+        // 必須早於 registerMenuCommand()，否則菜單標籤會顯示預設值而非已存速度
+        if (!asInstalled) {
+            asSpeed = asClampSpeed(GM_getValue('menu_autoScrollSpeed', 40));
+            asInstallInterrupt();
+            asInstalled = true;
+        }
         registerMenuCommand();
         if (GM_getValue('menu_page_number')) { pageNumber('add'); } else { pageNumber('set'); }
+        // SPA 導航會重建按鈕，捲動還在進行時要把指示燈補回去
+        asIndicate();
         if (curSite.blank !== undefined) setTimeout(forceTarget, 1000);
         if (curSite.style) insStyle(curSite.style);
         pageLoading();
