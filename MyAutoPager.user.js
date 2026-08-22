@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.15
+// @version      1.2.16
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -352,7 +352,7 @@
         DBSite = {
             // ---- 個人自訂規則 ----
             novel543: {
-                host: 'look.thisiscm.com',
+                host: ['look.thisiscm.com', 'look.twword.com'],
                 url: "/\\d+_\\d+/",
                 style: 'ins.clickforceads, iframe.cfadif, div[id*="tam-ad"], div[id*="cfad"], ad {display: none !important;}',
                 history: true, popupBlock: true,

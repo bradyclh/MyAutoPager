@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.11
+// @version      1.3.12
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -14,6 +14,7 @@
 // @grant        GM.getValue
 // @grant        GM.setValue
 // @match        *://look.thisiscm.com/*
+// @match        *://look.twword.com/*
 // @match        *://uukanshu.cc/*
 // @match        *://*.uukanshu.cc/*
 // @match        *://69shuba.tw/*
@@ -254,7 +255,7 @@
 
     var rules = {
         novel543: {
-            host: 'look.thisiscm.com',
+            host: ['look.thisiscm.com', 'look.twword.com'],
             url: /\d+_\d+/,
             style: 'ins.clickforceads, iframe.cfadif, div[id*="tam-ad"], div[id*="cfad"], ad {display:none!important}',
             pager: { nextL: '(//a[contains(text(),"下一章")])[last()]', pageE: '.chapter-content', replaceE: '.foot-nav', scrollD: 3000 },
