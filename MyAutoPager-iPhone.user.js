@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.14
+// @version      1.3.15
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -616,6 +616,7 @@
 
     var AS_KEY = 'autoScrollSpeed';
     var AS_MIN = 10, AS_MAX = 200, AS_STEP = 10, AS_SWIPE = 24, AS_IDLE_STOP = 30000;
+    var AS_TAP_MS = 350, AS_TAP_DIST = 20;
     var autoScroll = false, asSpeed = 40, asRaf = null, asLastTs = 0, asAcc = 0,
         asIdleMs = 0, asLastY = -1, asLastH = -1;
 
@@ -702,19 +703,50 @@
         console.info('[MyAutoPager] 自動捲頁速度：' + asSpeed + ' px/秒');
     }
 
-    // 真人介入即停。程式化 scrollBy 不會產生 touchmove，
-    // 所以不需要額外的「這是腳本自己捲的」旗標。
+    // 手動捲動（拖動／滾輪）刻意不再停止自動捲頁：使用者拖到想看的位置後，
+    // 捲動會從新位置繼續。停止方式是再點兩下。
     function asInstallInterrupt() {
-        ['touchmove', 'wheel'].forEach(function(ev) {
-            window.addEventListener(ev, function(e) {
-                if (!autoScroll) return;
-                var t = e.target;
-                // 頁碼按鈕自身的操作＝調速手勢，不算介入
-                // （shadow DOM 事件在 window 層會重定向到 host）
-                if (t && t.nodeType === 1 && t.closest && t.closest('#Autopage_number')) return;
-                asStop('手動介入');
-            }, { passive: true });
-        });
+        window.addEventListener('keydown', function(e) {
+            if (autoScroll && e.key === 'Escape') asStop('Esc');
+        }, true);
+    }
+
+    // 互動元素不當手勢起點：小說站正文裡常夾廣告錨點，雙擊等於連點兩次，
+    // 我們至少不把它認成啟動手勢
+    function asIsInteractive(t) {
+        if (!t || t.nodeType !== 1 || !t.closest) return false;
+        return !!t.closest('a,button,input,select,textarea,label,summary,[role="button"],[onclick],[contenteditable]');
+    }
+
+    // 頁面任意處點兩下＝啟動／停止自動捲頁。
+    // 自行以 pointerdown 計時而非監聽 dblclick，才能同時覆蓋觸控與滑鼠，
+    // 且不必攔截第一擊的預設行為（選字、點連結都照常）。
+    function asInstallPageTap() {
+        var lastT = 0, lastX = 0, lastY = 0;
+        document.addEventListener('pointerdown', function(e) {
+            if (e.isPrimary === false) return;
+            if (e.pointerType === 'mouse' && e.button !== 0) return;
+            var t = e.target;
+            // 腳本自身 UI 有自己的處理器（含調速手勢）
+            if (t && t.nodeType === 1 && t.closest && t.closest('#Autopage_number')) return;
+            if (asIsInteractive(t)) { lastT = 0; return; }
+
+            var now = performance.now();
+            if (now - lastT < AS_TAP_MS &&
+                Math.abs(e.clientX - lastX) < AS_TAP_DIST &&
+                Math.abs(e.clientY - lastY) < AS_TAP_DIST) {
+                lastT = 0;
+                // 正在選字（含雙擊選詞）時不搶手勢
+                try { var s = window.getSelection(); if (s && !s.isCollapsed) return; } catch (err) {}
+                asToggle();
+                return;
+            }
+            lastT = now; lastX = e.clientX; lastY = e.clientY;
+        }, true);
+
+        // 雙擊在 iOS Safari 原生是「放大」，不抑制的話會同時縮放頁面。
+        // manipulation 只關掉雙擊放大，pinch 縮放不受影響。
+        insStyle('body {touch-action: manipulation;}');
     }
 
     // ========== 滾動偵測 ==========
@@ -763,6 +795,7 @@
         createPageNumber();
         asLoadSpeed();
         asInstallInterrupt();
+        asInstallPageTap();
         startScrollWatch();
     });
 
