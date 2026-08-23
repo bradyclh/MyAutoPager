@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.16
+// @version      1.3.17
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -107,6 +107,40 @@
         document.documentElement.appendChild(document.createElement('style')).textContent = css;
     }
 
+    // ========== 畫面提示 ==========
+    // iPhone 上看不到 console（要接 Mac 開 Web Inspector），所以原本每個失敗
+    // 都是靜默的，出問題時使用者只知道「不會動」。這裡把關鍵狀態畫到頁面上。
+    var noticeHost = null, noticeTimer = null, noNextNotified = false;
+
+    function apNotice(msg, ms) {
+        try {
+            if (!noticeHost) {
+                noticeHost = document.createElement('div');
+                noticeHost.id = 'Autopage_notice';
+                noticeHost.style.cssText = 'position:fixed!important;left:0!important;right:0!important;' +
+                    'bottom:0!important;z-index:9999999!important';
+                document.documentElement.appendChild(noticeHost);
+                var sr = noticeHost.attachShadow({ mode: 'open' });
+                sr.innerHTML = '<style>#n{margin:8px;padding:10px 12px;border-radius:8px;' +
+                    'background:rgba(20,20,20,.92);color:#fff;font:14px/1.5 system-ui;' +
+                    'box-shadow:0 2px 8px rgba(0,0,0,.35);cursor:pointer;' +
+                    '-webkit-tap-highlight-color:transparent;touch-action:manipulation}</style>' +
+                    '<div id="n" role="status"></div>';
+                noticeHost._n = sr.querySelector('#n');
+            }
+            noticeHost.style.display = '';
+            noticeHost._n.textContent = '[MyAutoPager] ' + msg;
+            clearTimeout(noticeTimer);
+            // ms === 0 代表常駐（需要使用者自己點掉或點擊執行動作）
+            if (ms !== 0) {
+                noticeTimer = setTimeout(function() {
+                    if (noticeHost) noticeHost.style.display = 'none';
+                }, ms || 8000);
+            }
+            return noticeHost._n;
+        } catch (e) { return null; }
+    }
+
     function toE5pop(a) {
         if (!a.length) return;
         var b = a.pop();
@@ -190,6 +224,7 @@
 
             // 放行腳本自身 UI
             if (t.id === 'Autopage_number' || (t.closest && t.closest('#Autopage_number'))) return;
+            if (t.id === 'Autopage_notice' || (t.closest && t.closest('#Autopage_notice'))) return;
 
             // A. 無條件攔截危險錨點（javascript: 協議 / 跨域 target=_blank）
             var anchor = t.closest ? t.closest('a') : null;
@@ -382,7 +417,7 @@
 
     // ========== 規則匹配 ==========
 
-    var curSite = null;
+    var curSite = null, matchedKey = '';
     // 翻頁閘門由兩個獨立旗標組成，不可再合併為一個：
     //   userPaused — 使用者意圖（頁碼按鈕點擊切換），只有使用者能改
     //   pagerBusy  — 機器狀態（interval 節流窗），只有流程能改
@@ -403,6 +438,7 @@
             if (rule.url && !rule.url.test(path)) continue;
             curSite = rule;
             curSite.pageUrl = '';
+            matchedKey = key;
             console.info('[MyAutoPager] 匹配:', key);
             return;
         }
@@ -443,8 +479,13 @@
     // 失敗時務必解除去重標記：getNextUrl() 以 curSite.pageUrl 判斷「這個
     // URL 抓過了」，不清就等於把它永久標記成已抓，翻頁從此停擺（桌面版
     // onXhrError 早已有同樣處理）。延遲後才清，避免固定失敗的 URL 密集重試。
-    function releaseUrl(url, why) {
+    // quiet：呼叫端已經顯示更具體的提示時，不要再用通用訊息蓋掉它
+    function releaseUrl(url, why, quiet) {
         console.log('[MyAutoPager] 載入失敗（' + why + '）:', url);
+        if (!quiet) {
+            apNotice('下一頁失敗（' + why + '），' + Math.round(((curSite.pager && curSite.pager.retry) || 3000) / 1000) +
+                     ' 秒後可再滾動重試', 10000);
+        }
         setTimeout(function() {
             if (curSite && curSite.pageUrl === url) curSite.pageUrl = '';
         }, (curSite.pager && curSite.pager.retry) || 3000);
@@ -485,6 +526,7 @@
                         // 管理器沒給可用內容 → 改用原生 XHR 立即重試。
                         // 支援站點的下一頁一律同源，原生 XHR 足夠。
                         console.log('[MyAutoPager] GM 回應無法解讀，改用原生 XHR:', url);
+                        apNotice('GM 回應無法解讀，改用原生 XHR 重試', 6000);
                         nativeFetchNextPage(url);
                         return;
                     }
@@ -572,9 +614,18 @@
             // 清理所有章節（含原始頁）
             cleanContent(getAll(curSite.pager.pageE), curSite.cleanOpts);
 
+            noNextNotified = false;
             if (curSite.afterPage) curSite.afterPage();
-        } else if (curSite.pager.retry) {
-            setTimeout(function() { curSite.pageUrl = ''; }, curSite.pager.retry);
+        } else {
+            // 取到回應卻插不進去。最常見原因是伺服器對 XHR 回的不是真正的
+            // 章節頁（例如先回一段 JS 轉向殼層），於是 pageE 抓不到任何元素。
+            // 原本只有規則設了 retry 才清 pageUrl，而 novel543 等規則沒設，
+            // 等於插入失敗一次就把該 URL 永久標記成已抓，翻頁從此停擺。
+            var raw = (response && response.documentElement) ? response.documentElement.innerHTML.length : 0;
+            console.error('[MyAutoPager] 插入失敗：pageE=' + pageE.length + ' 插入點=' + !!toE + ' 回應長度=' + raw);
+            apNotice('取到回應但插不進去：內容元素 ' + pageE.length + ' 個、插入點 ' +
+                     (toE ? '有' : '無') + '、回應 ' + raw + ' 字。內容元素為 0 代表伺服器回的不是章節頁。', 15000);
+            releaseUrl(curSite.pageUrl, '插入失敗', true);
         }
     }
 
@@ -824,7 +875,15 @@
                     pagerBusy = true;
                     setTimeout(function() { pagerBusy = false; }, interval);
                     var url = getNextUrl();
-                    if (url) fetchNextPage(url);
+                    if (url) {
+                        fetchNextPage(url);
+                    } else if (!noNextNotified) {
+                        // 到了觸發線卻找不到下一頁連結。滾動事件每秒數十次，
+                        // 所以只提示一次，成功插入後才重新武裝（processElements）。
+                        noNextNotified = true;
+                        console.warn('[MyAutoPager] 找不到下一頁連結，nextL:', curSite.pager.nextL);
+                        apNotice('找不到「下一章」連結：可能已是最後一頁，或規則的 nextL 沒命中', 12000);
+                    }
                 }
             }, { passive: true });
         }, 1000);
@@ -837,7 +896,21 @@
 
     // 檢查是否被禁用
     isDisabled().then(function(disabled) {
-        if (disabled) { console.info('[MyAutoPager] 已禁用:', location.hostname); return; }
+        if (disabled) {
+            console.info('[MyAutoPager] 已禁用:', location.hostname);
+            // 原本這裡直接 return，連頁碼按鈕都不建立；而「停用本站」的唯一
+            // 入口就是那顆按鈕的長按 —— 於是在 iPhone 上停用之後，再也沒有
+            // 任何 UI 可以重新啟用，等於永久死掉。留一個常駐提示當復原入口。
+            var n = apNotice('已對 ' + location.hostname + ' 停用自動翻頁。點此重新啟用。', 0);
+            if (n) n.addEventListener('click', function() { toggleDisable(); });
+            return;
+        }
+
+        // 啟用確認：iPhone 沒有 console，這行是使用者唯一能確認
+        // 「腳本有在跑、跑的是哪一版」的方式
+        var ver = '';
+        try { ver = (GM.info && GM.info.script && GM.info.script.version) || ''; } catch (e) {}
+        apNotice('已啟用' + (ver ? ' v' + ver : '') + '（規則：' + matchedKey + '）', 4000);
 
         if (curSite.style) insStyle(curSite.style);
         try { cleanContent(getAll(curSite.pager.pageE)); } catch (e) {}
