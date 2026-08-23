@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.17
+// @version      1.3.18
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -512,7 +512,18 @@
     function fetchNextPage(url) {
         curSite.pageUrl = url;
 
-        // 優先使用 GM_xmlhttpRequest（更好的 cookie 處理）
+        // 同源一律走原生 XHR。原生請求由頁面 context 發出，帶得到站方用 JS
+        // 設的第一方 cookie（novel543 系的 web-id）；GM_xmlhttpRequest 由
+        // userscript App 端發出、用不同的 cookie jar，該站因此只回一段 JS
+        // 轉向殼層（無 .chapter-content），症狀就是「取到回應但插不進去、
+        // 內容元素 0 個」。桌面版早就為此在 Chrome 偏好原生 XHR，iPhone 版
+        // 之前沒跟上，這是本站在 iPhone 上載不到下一篇的真正原因。
+        if (!isCrossOrigin(url)) {
+            nativeFetchNextPage(url);
+            return;
+        }
+
+        // 跨域才需要 GM_xmlhttpRequest（原生會被 CORS 擋）
         if (typeof GM_xmlhttpRequest === 'function') {
             GM_xmlhttpRequest({
                 url: url,
@@ -523,8 +534,9 @@
                 onload: function(resp) {
                     var html = respToHtml(resp);
                     if (!html) {
-                        // 管理器沒給可用內容 → 改用原生 XHR 立即重試。
-                        // 支援站點的下一頁一律同源，原生 XHR 足夠。
+                        // 管理器沒給可用內容（例如無視 responseType）→ 改用
+                        // 原生 XHR 死馬當活馬醫；跨域會被 CORS 擋，但至少
+                        // 會走到 releaseUrl 而不是靜默卡死。
                         console.log('[MyAutoPager] GM 回應無法解讀，改用原生 XHR:', url);
                         apNotice('GM 回應無法解讀，改用原生 XHR 重試', 6000);
                         nativeFetchNextPage(url);
@@ -544,7 +556,8 @@
         }
     }
 
-    // 原生 XMLHttpRequest 路徑（同源可用；同時作為 GM 回應不可用時的退路）
+    // 原生 XMLHttpRequest 路徑：同源的主要路徑（帶得到第一方 cookie），
+    // 同時作為 GM 回應不可用時的退路
     function nativeFetchNextPage(url) {
         curSite.pageUrl = url;
         var xhr = new XMLHttpRequest();
