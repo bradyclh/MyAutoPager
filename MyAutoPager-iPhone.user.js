@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.15
+// @version      1.3.16
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -440,6 +440,34 @@
     }
 
 
+    // 失敗時務必解除去重標記：getNextUrl() 以 curSite.pageUrl 判斷「這個
+    // URL 抓過了」，不清就等於把它永久標記成已抓，翻頁從此停擺（桌面版
+    // onXhrError 早已有同樣處理）。延遲後才清，避免固定失敗的 URL 密集重試。
+    function releaseUrl(url, why) {
+        console.log('[MyAutoPager] 載入失敗（' + why + '）:', url);
+        setTimeout(function() {
+            if (curSite && curSite.pageUrl === url) curSite.pageUrl = '';
+        }, (curSite.pager && curSite.pager.retry) || 3000);
+    }
+
+    // 把 GM_xmlhttpRequest 的回應轉成 HTML 字串。
+    // 各家 userscript 管理器對 responseType 的支援差異很大：Safari 的
+    // Userscripts App 常無視 'arraybuffer' 而直接給字串，此時
+    // TextDecoder.decode() 會拋 TypeError，整頁內容就靜默消失。
+    // 所以這裡對「實際拿到什麼」照單全收，真的拿不到才回空字串。
+    function respToHtml(resp) {
+        if (!resp) return '';
+        var body = resp.response;
+        if (typeof body === 'string' && body) return body;
+        if (body && (body instanceof ArrayBuffer || body.buffer instanceof ArrayBuffer)) {
+            try {
+                return new TextDecoder(document.characterSet || 'utf-8').decode(body);
+            } catch (e) { /* 落到 responseText */ }
+        }
+        if (typeof resp.responseText === 'string' && resp.responseText) return resp.responseText;
+        return '';
+    }
+
     function fetchNextPage(url) {
         curSite.pageUrl = url;
 
@@ -452,29 +480,51 @@
                 headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml' },
                 timeout: 8000,
                 onload: function(resp) {
-                    try {
-                        var charset = document.characterSet || 'utf-8';
-                        var html = new TextDecoder(charset).decode(resp.response);
-                        processElements(createDoc(html));
-                    } catch (e) { console.error('[MyAutoPager] 處理錯誤:', e); }
+                    var html = respToHtml(resp);
+                    if (!html) {
+                        // 管理器沒給可用內容 → 改用原生 XHR 立即重試。
+                        // 支援站點的下一頁一律同源，原生 XHR 足夠。
+                        console.log('[MyAutoPager] GM 回應無法解讀，改用原生 XHR:', url);
+                        nativeFetchNextPage(url);
+                        return;
+                    }
+                    try { processElements(createDoc(html)); }
+                    catch (e) {
+                        console.error('[MyAutoPager] 處理錯誤:', e);
+                        releaseUrl(url, '處理錯誤');
+                    }
                 },
-                onerror: function() { console.log('[MyAutoPager] 載入失敗:', url); },
-                ontimeout: function() { curSite.pageUrl = ''; }
+                onerror: function() { releaseUrl(url, 'GM onerror'); },
+                ontimeout: function() { releaseUrl(url, 'GM 逾時'); }
             });
         } else {
-            // 回退到原生 XMLHttpRequest（同域名可用）
-            var xhr = new XMLHttpRequest();
-            xhr.open('GET', url, true);
-            xhr.overrideMimeType('text/html; charset=' + (document.characterSet || 'utf-8'));
-            xhr.timeout = 8000;
-            xhr.onload = function() {
-                try { processElements(createDoc(xhr.responseText)); }
-                catch (e) { console.error('[MyAutoPager] 處理錯誤:', e); }
-            };
-            xhr.onerror = function() { console.log('[MyAutoPager] 載入失敗:', url); };
-            xhr.ontimeout = function() { curSite.pageUrl = ''; };
-            xhr.send();
+            nativeFetchNextPage(url);
         }
+    }
+
+    // 原生 XMLHttpRequest 路徑（同源可用；同時作為 GM 回應不可用時的退路）
+    function nativeFetchNextPage(url) {
+        curSite.pageUrl = url;
+        var xhr = new XMLHttpRequest();
+        try { xhr.open('GET', url, true); }
+        catch (e) { releaseUrl(url, 'XHR open'); return; }
+        try { xhr.overrideMimeType('text/html; charset=' + (document.characterSet || 'utf-8')); } catch (e) {}
+        xhr.timeout = 8000;
+        xhr.onload = function() {
+            if (xhr.status && (xhr.status < 200 || xhr.status >= 400)) {
+                releaseUrl(url, 'HTTP ' + xhr.status);
+                return;
+            }
+            if (!xhr.responseText) { releaseUrl(url, '空回應'); return; }
+            try { processElements(createDoc(xhr.responseText)); }
+            catch (e) {
+                console.error('[MyAutoPager] 處理錯誤:', e);
+                releaseUrl(url, '處理錯誤');
+            }
+        };
+        xhr.onerror = function() { releaseUrl(url, 'XHR error'); };
+        xhr.ontimeout = function() { releaseUrl(url, 'XHR 逾時'); };
+        xhr.send();
     }
 
     function processElements(response) {
