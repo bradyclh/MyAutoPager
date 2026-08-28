@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.20
+// @version      1.2.21
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -630,6 +630,27 @@
                             el.querySelectorAll('.div_feedback, .social_share_frame, .txtad').forEach(function(n) { n.remove(); });
                         });
                         return cleanContent(pageE, {keepText: '.content'});
+                    },
+                    aF: function() {
+                        // 站方以 inline color 控制 12 種配色：正文 <p> 的 color 由伺服器輸出，
+                        // 但章節標題 <h1> 的 color 是客戶端 JS 載入後才補上的，XHR 取得的新頁沒有，
+                        // 插入的標題會掉回站方 CSS 預設色（深藍灰），與首章的黑色不一致。
+                        var h1s = getAll('.frame_body > .title h1');
+                        var titleColor = h1s.length ? h1s[0].style.color : '';
+                        if (titleColor) {
+                            for (var i = 1; i < h1s.length; i++) h1s[i].style.color = titleColor;
+                        }
+                        // 使用者切換配色後才插入的章節，正文仍是伺服器預設色，一併同步。
+                        // （切換當下站方會重套現有 DOM，故只需處理之後插入的內容）
+                        var bodies = getAll('.frame_body > .content:not(:has(.next_page))');
+                        var firstP = bodies.length ? bodies[0].querySelector('p') : null;
+                        var textColor = firstP ? firstP.style.color : '';
+                        if (!textColor) return;
+                        for (var j = 1; j < bodies.length; j++) {
+                            if (bodies[j].dataset.apColorSynced === textColor) continue;
+                            bodies[j].querySelectorAll('p').forEach(function(p) { p.style.color = textColor; });
+                            bodies[j].dataset.apColorSynced = textColor;
+                        }
                     }
                 }
             },
