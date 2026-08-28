@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.18
+// @version      1.3.19
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -31,6 +31,8 @@
 // @match        *://*.ixdzs.tw/*
 // @match        *://ixdzs8.com/*
 // @match        *://*.ixdzs8.com/*
+// @match        *://ttks.tw/*
+// @match        *://*.ttks.tw/*
 // @noframes
 // ==/UserScript==
 
@@ -409,6 +411,30 @@
             },
             // 正文一句一個 <p>，keepText 防推廣關鍵字誤刪
             cleanOpts: { keepText: '.page-content section' }
+        },
+        ttks: {
+            // 天天看小說（AMP 頁面，正文與上下章導航各自是一個 .content）
+            host: 'ttks.tw',
+            url: /^\/novel\/chapters\/[^\/]+\/\d+\.html/,
+            // 段落間插入的文字廣告與版面廣告槽
+            style: '.txtad, ins.pubadx-slot, div[id^="supr-ad-container"] {display:none!important}',
+            pager: {
+                // 末章的下一章連結指向目錄 index.html，:not 排除之 → nextL 落空即乾淨停止
+                nextL: '#linkNext:not([href*="index.html"])',
+                // .frame_body 下有兩個 .content（正文、上下章導航），用 :has 區分；
+                // .title 內是章節標題 <h1>
+                pageE: '.frame_body > .title, .frame_body > .content:not(:has(.next_page))',
+                replaceE: '.frame_body > .content:has(.next_page)',
+                scrollD: 2000
+            },
+            // 正文一句一個 <p>，keepText 防推廣關鍵字誤刪
+            cleanOpts: { keepText: '.content' },
+            beforePage: function(pageE) {
+                // 正文尾端的功能列（添加書籤／返回目錄／分享）每章都有，不移除就會逐章重複堆疊
+                pageE.forEach(function(el) {
+                    el.querySelectorAll('.div_feedback, .social_share_frame, .txtad').forEach(function(n) { n.remove(); });
+                });
+            }
         }
         // thepaperbooks（8book 系小說站）：真實內文由站方混淆 script 在瀏覽器
         // 渲染（伺服器對非瀏覽器請求偽裝成關鍵字農場頁），需要 iframe 擷取

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.19
+// @version      1.2.20
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -602,6 +602,35 @@
                 },
                 function: {
                     bF: function(pageE) { return cleanContent(pageE, {keepText: '.page-content section'}); }
+                }
+            },
+            ttks: {
+                // 天天看小說（AMP 頁面，正文與上下章導航各自是一個 .content）
+                host: '/(^|\\.)ttks\\.tw$/',
+                url: "/^\\/novel\\/chapters\\/[^\\/]+\\/\\d+\\.html/",
+                // 段落間插入的文字廣告與版面廣告槽
+                style: '.txtad, ins.pubadx-slot, div[id^="supr-ad-container"] {display: none !important;}',
+                history: true, retry: 3000, popupBlock: true,
+                // 正文一句一個 <p>，keepText 防推廣關鍵字誤刪
+                cleanOpts: { keepText: '.content' },
+                pager: {
+                    // 末章的下一章連結指向目錄 index.html，:not 排除之 → nextL 落空即乾淨停止
+                    nextL: '#linkNext:not([href*="index.html"])',
+                    // .frame_body 下有兩個 .content（正文、上下章導航），用 :has 區分；
+                    // .title 內是章節標題 <h1>
+                    pageE: '.frame_body > .title, .frame_body > .content:not(:has(.next_page))',
+                    replaceE: '.frame_body > .content:has(.next_page)',
+                    scrollD: 2000
+                },
+                function: {
+                    bF: function(pageE) {
+                        // 正文尾端的功能列（添加書籤／返回目錄／分享）每章都有，
+                        // 不移除的話每翻一章就重複堆一組。
+                        pageE.forEach(function(el) {
+                            el.querySelectorAll('.div_feedback, .social_share_frame, .txtad').forEach(function(n) { n.remove(); });
+                        });
+                        return cleanContent(pageE, {keepText: '.content'});
+                    }
                 }
             },
 
