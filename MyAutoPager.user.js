@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.21
+// @version      1.2.22
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -652,6 +652,28 @@
                             bodies[j].dataset.apColorSynced = textColor;
                         }
                     }
+                }
+            },
+            twkan: {
+                // 台灣小說網（與 69shuba 同模板：.txtnav 章節區塊、.page1 上下章導航）
+                host: '/(^|\\.)twkan\\.com$/',
+                url: "/^\\/txt\\/\\d+\\/\\d+/",
+                // 正文中夾的文字廣告與版位（皆為 script + ins/div 的空殼）
+                style: '.txtad, .txtcenter, ins.pubadx-slot {display: none !important;}',
+                history: true, retry: 3000, popupBlock: true,
+                pager: {
+                    // 末章的「下一章」指向完本頁 end.html，:not 排除之 → nextL 落空即乾淨停止；
+                    // [href*="/txt/"] 另擋掉導航列缺「下一章」時 last-child 落到「目錄」的情況
+                    nextL: '.page1 a:last-child[href*="/txt/"]:not([href*="end.html"])',
+                    // .txtnav 一塊涵蓋 h1 章節標題、.txtinfo 章節資訊與正文
+                    pageE: '.txtnav',
+                    replaceE: '.page1',
+                    scrollD: 2000
+                },
+                function: {
+                    // 正文是純文字節點 + <br>，不是 <p>，不會被推廣關鍵字規則掃到，
+                    // 故不需 keepText；廣告空殼由 cleanContent 一併清掉。
+                    bF: function(pageE) { return cleanContent(pageE); }
                 }
             },
 
