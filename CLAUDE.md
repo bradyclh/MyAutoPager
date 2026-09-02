@@ -20,11 +20,24 @@ AutoPager 是一個 Tampermonkey 油猴腳本（UserScript），提供瀏覽器�
 
 ## 開發方式
 
-無 build/lint/test 命令。開發流程：
+無 build 系統。開發流程：
 1. 直接編輯 `.user.js` 檔案
-2. 透過 Tampermonkey 管理器重載測試
-3. 瀏覽器 DevTools Console 查看 `console.info()` / `console.error()` 輸出
-4. 比較兩版本差異：`diff AutoPager-6.6.66.user.js AutoPager-6.6.73.user.js`
+2. 跑靜態檢查：`node test/static.test.js`（零依賴、離線可跑）
+3. 透過 Tampermonkey 管理器重載，在真實章節頁跑瀏覽器 e2e
+4. 瀏覽器 DevTools Console 查看 `console.info()` / `console.error()` 輸出
+5. 比較兩版本差異：`diff AutoPager-6.6.66.user.js AutoPager-6.6.73.user.js`
+
+### 測試
+
+改完規則兩層都要跑，細節見 `test/README.md`：
+
+- **靜態檢查** `node test/static.test.js` — 抓規則沒註冊、iPhone 版 `@match` 漏掉、
+  桌面與 iPhone 版選擇器不同步、規則太寬會在目錄頁誤啟用。
+- **瀏覽器 e2e** — 注入 `test/fixtures/sites.js` 與 `test/e2e-browser.js` 後呼叫
+  `APE2E.run()` / `APE2E.runStop()` / `APE2E.checkStyles()`，驗證翻頁真的發生、
+  插入章節的 computed style 與首章一致、功能列沒重複堆疊、末章乾淨停止。
+
+新增站台規則時，必須在 `test/fixtures/sites.js` 補一筆樣本，否則靜態檢查會失敗。
 
 ## 架構設計
 

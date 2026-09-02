@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.22
+// @version      1.3.23
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -23,6 +23,8 @@
 // @match        *://*.69shuba.com/*
 // @match        *://uuread.tw/*
 // @match        *://*.uuread.tw/*
+// @match        *://qimao.com/*
+// @match        *://*.qimao.com/*
 // @match        *://tw.hjwzw.com/*
 // @match        *://www.hjwzw.com/*
 // @match        *://ixdzs.hk/*
