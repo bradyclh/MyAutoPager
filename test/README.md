@@ -30,6 +30,23 @@ node test/static.test.js
 
 e2e 測的是**頁面上實際在跑的那份 userscript**。要驗證還沒提交的本機修改，得先讓瀏覽器跑到你改的版本：把本機檔案更新進 Tampermonkey，或停用已安裝的版本後手動注入本機檔案。否則你測到的是舊版。
 
+### 兩個版本都要各跑一次
+
+桌面版與 iPhone 版是**兩套獨立的引擎**，只有規則物件長得像。靜態檢查只能保證選擇器字面一致，保證不了行為一致——twkan 就發生過「桌面版 e2e 全過、iPhone 版從沒被端到端驗證」的情況。
+
+在桌面瀏覽器裡也可以驗 iPhone 版：注入 `MyAutoPager-iPhone.user.js` 並補上 GM API shim（`GM.getValue` / `GM.setValue` 回傳 Promise、`GM_xmlhttpRequest` 用 fetch 實作）即可。
+
+**要分辨是哪個引擎在翻頁**（兩個同時跑時 DOM 是共用的），看各自的頁碼計數器：
+
+```js
+[...document.querySelectorAll('#Autopage_number')]
+    .map(h => h.shadowRoot ? h.shadowRoot.querySelector('#btn').textContent : '?')
+```
+
+iPhone 版建立的那個計數器有前進，才代表確實是它完成了插入。`#Autopage_notice`（畫面提示）也是 iPhone 版獨有的元素，可用來確認它有啟動、命中哪條規則、跑的是哪一版。
+
+注意：`@match` 只在 Userscripts App 裡決定腳本是否被注入，桌面手動注入時不生效——**`@match` 漏掉這種問題只有靜態檢查抓得到**，e2e 抓不到。
+
 在章節頁的 console 依序貼上 `test/fixtures/sites.js` 與 `test/e2e-browser.js`，然後：
 
 ```js
