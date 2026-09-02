@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.23
+// @version      1.3.24
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -368,6 +368,23 @@
                         for (var i = 1; i < all.length; i++) {
                             all[i].className = all[i].className.replace(/\bfont-\d+\b/, '').trim() + ' ' + fontClass;
                         }
+                    }
+                }
+                // 章節標題的大標樣式來自站方 CSS 的
+                // .chapter-detail-wrap-info .chapter-title，但插入的章節落在
+                // .chapter-detail-wrap-content 底下，選擇器不再命中，標題會縮成
+                // 14px 細體靠左。把首章標題的實際樣式複製過去 —— 值取自
+                // computed style 而非寫死，站方改版時會自動跟隨。
+                var titleEls = getAll('.chapter-title');
+                if (titleEls.length > 1) {
+                    var titleBase = getComputedStyle(titleEls[0]);
+                    var titleProps = ['fontSize', 'fontWeight', 'lineHeight', 'textAlign', 'color'];
+                    for (var t = 1; t < titleEls.length; t++) {
+                        if (titleEls[t].dataset.apTitleSynced) continue;
+                        for (var q = 0; q < titleProps.length; q++) {
+                            titleEls[t].style[titleProps[q]] = titleBase[titleProps[q]];
+                        }
+                        titleEls[t].dataset.apTitleSynced = '1';
                     }
                 }
             }

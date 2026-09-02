@@ -226,6 +226,7 @@
         var R = results();
 
         var before = qsa(cfg.chapterBlock).length;
+        var navBefore = qsa(cfg.navEl).length;
         R.add('起始有章節內容', before > 0, '章節區塊 ' + before + ' 個');
 
         // 這裡預期「不會」翻頁，所以等固定時間而不是等變化。
@@ -239,7 +240,10 @@
 
         var after = qsa(cfg.chapterBlock).length;
         R.add('末章不再翻頁', after === before, '章節區塊 ' + before + ' → ' + after);
-        R.add('導航列維持唯一', qsa(cfg.navEl).length === 1, '');
+        // 比對前後而不是斷言等於 1：有些站的末章頁原生就帶不只一組導航
+        // （七猫的付費牆章節頁就有兩組）。真正的不變條件是「沒有累積」。
+        var navAfter = qsa(cfg.navEl).length;
+        R.add('導航列沒有累積', navAfter <= navBefore, '導航列 ' + navBefore + ' → ' + navAfter);
 
         return Object.assign({ site: site.key, mode: 'stop' }, R.summary());
     }

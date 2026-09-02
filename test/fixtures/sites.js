@@ -52,9 +52,23 @@ return [
     },
     {
         key: 'qimao',
-        verified: false,
+        verified: true,
         chapter: [['www.qimao.com', '/reader/index/123'], ['www.qimao.com', '/shuku/123-456']],
         notChapter: [['www.qimao.com', '/shuku/123/']],
+        e2e: {
+            // /reader/index/<書號> 是該書第一章，免費章節。
+            // 排行榜連到的最新章多半是 canvas 付費牆，翻不動也不該翻。
+            start: 'https://www.qimao.com/reader/index/195958',
+            // 付費牆章節：正文以 canvas 渲染、沒有 <p>，footer 也沒有「下一章」。
+            // 規則會偵測並停止翻頁，所以拿它當「停止」情境測。
+            last: 'https://www.qimao.com/shuku/195958-47540682/',
+            chapterBlock: '.chapter-detail-article',
+            titleEl: '.chapter-title',
+            navEl: '.reader-footer',
+            textEl: 'p',
+            singletons: [],
+            hiddenAds: [],
+        },
     },
     {
         key: 'hjwzw',
