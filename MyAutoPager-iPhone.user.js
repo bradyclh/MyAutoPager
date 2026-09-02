@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.21
+// @version      1.3.22
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -972,8 +972,15 @@
     matchRule();
     if (!curSite) return;
 
-    // 檢查是否被禁用
-    isDisabled().then(function(disabled) {
+    // 檢查是否被禁用。
+    // 採「失敗即放行」：整個啟動流程都掛在這個 then 裡，若 GM.getValue 不 resolve
+    // （某些 Safari / Userscripts 版本會如此）或拋錯，樣式、頁碼按鈕、翻頁監聽
+    // 全都不會執行 —— 在沒有 console 的 iPhone 上就是「腳本完全沒反應」且無從查起。
+    // 逾時與 catch 讓非同步儲存 API 的問題不會拖死整個腳本。
+    Promise.race([
+        isDisabled(),
+        new Promise(function(resolve) { setTimeout(function() { resolve(false); }, 3000); })
+    ]).catch(function() { return false; }).then(function(disabled) {
         if (disabled) {
             console.info('[MyAutoPager] 已禁用:', location.hostname);
             // 原本這裡直接 return，連頁碼按鈕都不建立；而「停用本站」的唯一
@@ -984,20 +991,28 @@
             return;
         }
 
+        // 頁碼按鈕最先建立：它是使用者在 iPhone 上判斷「腳本到底有沒有在跑」的
+        // 唯一可見標記，後面任何一步出錯都不該讓它跟著消失。
+        try { createPageNumber(); } catch (e) {}
+
         // 啟用確認：iPhone 沒有 console，這行是使用者唯一能確認
-        // 「腳本有在跑、跑的是哪一版」的方式
+        // 「腳本有在跑、跑的是哪一版、命中哪條規則」的方式
         var ver = '';
         try { ver = (GM.info && GM.info.script && GM.info.script.version) || ''; } catch (e) {}
         apNotice('已啟用' + (ver ? ' v' + ver : '') + '（規則：' + matchedKey + '）', 4000);
 
-        if (curSite.style) insStyle(curSite.style);
-        try { cleanContent(getAll(curSite.pager.pageE)); } catch (e) {}
-        installClickGuard();
-        createPageNumber();
-        asLoadSpeed();
-        asInstallInterrupt();
-        asInstallPageTap();
-        startScrollWatch();
+        try {
+            if (curSite.style) insStyle(curSite.style);
+            try { cleanContent(getAll(curSite.pager.pageE)); } catch (e) {}
+            installClickGuard();
+            asLoadSpeed();
+            asInstallInterrupt();
+            asInstallPageTap();
+            startScrollWatch();
+        } catch (e) {
+            // 沒有 console 可看，把錯誤直接顯示在畫面上，否則只會表現為「沒反應」
+            apNotice('啟動失敗：' + ((e && e.message) || e), 0);
+        }
     });
 
 })();
