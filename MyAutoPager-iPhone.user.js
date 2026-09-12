@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.24
+// @version      1.4.0
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -8,7 +8,7 @@
 // @copyright    Original AutoPager (c) X.I.U (https://github.com/XIU2/UserScript) GPL-3.0
 // @license      GPL-3.0
 // @inject-into  content
-// @run-at       document-end
+// @run-at       document-start
 // @weight       999
 // @grant        GM_xmlhttpRequest
 // @grant        GM.getValue
@@ -44,19 +44,70 @@
     'use strict';
 
     // ========== 彈窗攔截（第一層：覆寫 window.open） ==========
-    // 盡早執行，防止頁面腳本保存原始參考
-    try {
-        Object.defineProperty(window, 'open', {
-            value: function(url) {
-                console.warn('[MyAutoPager] 攔截 window.open:', url);
-                return null;
-            },
-            writable: false,
-            configurable: false
-        });
-    } catch (e) {
-        try { window.open = function(url) { console.warn('[MyAutoPager] 攔截 window.open:', url); return null; }; } catch (e2) {}
+    // 這段的前提是 @run-at document-start。先前掛在 document-end，等於所有頁面
+    // 腳本都跑完才覆寫 —— 廣告載入器早就把原始的 window.open 存進自己的變數，
+    // 之後再怎麼改 window.open 都攔不到，這就是「iPhone 版擋不住廣告分頁」的主因。
+    function apBlockedOpen(url) {
+        console.warn('[MyAutoPager] 攔截 window.open:', url);
+        return null;
     }
+
+    // 鎖成不可寫、不可重設，頁面腳本沒辦法再改回去
+    function hardenOpen(win) {
+        try {
+            if (!win || win.__apOpenLocked) return;
+            Object.defineProperty(win, 'open', {
+                value: apBlockedOpen, writable: false, configurable: false
+            });
+            try { Object.defineProperty(win, '__apOpenLocked', { value: true }); } catch (e) {}
+        } catch (e) {
+            try { win.open = apBlockedOpen; } catch (e2) {}
+        }
+    }
+    hardenOpen(window);
+
+    // 第一層之二：iframe。腳本帶 @noframes，不會注入到廣告 iframe 裡，那裡的
+    // window.open 是乾淨的；而「插一個同源 iframe 再呼叫 contentWindow.open」
+    // 更是繞過覆寫的經典手法。兩種都要堵。
+    var AP_IFRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
+
+    function guardIframe(f) {
+        try {
+            var src = f.getAttribute('src') || '';
+            if (src && isCrossOrigin(src)) {
+                // 跨域 iframe 的 contentWindow 碰不到，改用 sandbox：少了
+                // allow-popups / allow-top-navigation，瀏覽器自己就會擋掉彈窗。
+                // 只在頁面沒自己設過 sandbox 時才加，免得放寬既有限制。
+                if (f.getAttribute('sandbox') === null) f.setAttribute('sandbox', AP_IFRAME_SANDBOX);
+                return;
+            }
+            // 同源（含 about:blank / srcdoc）：直接鎖掉它的 open
+            hardenOpen(f.contentWindow);
+            f.addEventListener('load', function() { hardenOpen(f.contentWindow); });
+        } catch (e) {}
+    }
+
+    // 第一層之三：程式化點擊。a.click() 若錨點還沒進 DOM，事件根本傳不到
+    // document，下面的點擊守衛攔不到，瀏覽器卻照樣開新分頁。
+    // 只影響腳本呼叫的 .click()：使用者真的用手指點，走的不是這條路徑。
+    try {
+        var apNativeClick = HTMLAnchorElement.prototype.click;
+        Object.defineProperty(HTMLAnchorElement.prototype, 'click', {
+            value: function() {
+                var raw = '';
+                try { raw = this.getAttribute('href') || ''; } catch (e) {}
+                var isJs = raw.toLowerCase().replace(/\s/g, '').indexOf('javascript:') === 0;
+                var tgt = null;
+                try { tgt = this.getAttribute('target'); } catch (e) {}
+                if (isJs || tgt === '_blank' || tgt === '_new') {
+                    console.warn('[MyAutoPager] 攔截程式化 a.click():', raw);
+                    return;
+                }
+                return apNativeClick.apply(this, arguments);
+            },
+            writable: true, configurable: true
+        });
+    } catch (e) {}
 
     // ========== DOM 選擇器 ==========
 
@@ -197,6 +248,118 @@
         });
     }
 
+    // 第二層之二：整頁（非只有正文）的輕量拆彈，給觀察器與初始掃描共用。
+    // 比 stripPopupTriggers 保守：只拔 inline 事件、只中和 javascript: 與
+    // 跨域 _blank 錨點，不動一般跨域連結 —— 整頁套用 stripPopupTriggers 會
+    // 連站內導覽都拔掉 href，萬一「下一章」是跨域連結就直接把翻頁弄壞。
+    function apDefuseAnchor(a) {
+        var raw = a.getAttribute('href') || '';
+        var isJs = raw.toLowerCase().replace(/\s/g, '').indexOf('javascript:') === 0;
+        var tgt = a.getAttribute('target');
+        if (isJs) {
+            a.setAttribute('data-blocked-href', raw);
+            a.removeAttribute('href');
+            a.removeAttribute('target');
+            a.style.setProperty('pointer-events', 'none', 'important');
+            return;
+        }
+        if ((tgt === '_blank' || tgt === '_new') && raw) {
+            if (isCrossOrigin(raw)) {
+                a.setAttribute('data-blocked-href', raw);
+                a.removeAttribute('href');
+                a.removeAttribute('target');
+                a.style.setProperty('pointer-events', 'none', 'important');
+            } else {
+                // 站內連結不必弄死，改成同分頁開啟就好
+                a.removeAttribute('target');
+            }
+        }
+    }
+
+    // 站方自己的 UI（字級、夜間模式、書籤）很常用 inline onclick，全頁一律拔
+    // 會把那些按鈕一起弄壞。所以正文以外只對兩種節點拔：錨點，以及 class/id
+    // 看起來就是廣告的容器 —— 開新分頁的載體實際上就是這些。
+    // 正文範圍本來就由 cleanContent → stripPopupTriggers 全部拔掉，不重複處理。
+    function apShouldStripInline(n) {
+        if (n.tagName === 'A') return true;
+        var cls = n.className;
+        if (cls && typeof cls !== 'string' && cls.baseVal !== undefined) cls = cls.baseVal;
+        if (typeof cls === 'string' && AD_CLASS_RE.test(cls)) return true;
+        return !!(n.id && AD_CLASS_RE.test(n.id));
+    }
+
+    function apDefuse(root) {
+        if (!root || root.nodeType !== 1) return;
+        try {
+            if (apShouldStripInline(root)) {
+                INLINE_EVENT_ATTRS.forEach(function(a) { root.removeAttribute(a); });
+            }
+            if (root.children && root.children.length) {
+                var sel = '[' + INLINE_EVENT_ATTRS.join('],[') + ']';
+                root.querySelectorAll(sel).forEach(function(n) {
+                    if (!apShouldStripInline(n)) return;
+                    INLINE_EVENT_ATTRS.forEach(function(a) { n.removeAttribute(a); });
+                });
+            }
+        } catch (e) {}
+        try {
+            if (root.tagName === 'A') apDefuseAnchor(root);
+            if (root.children && root.children.length) {
+                root.querySelectorAll('a[href]').forEach(apDefuseAnchor);
+            }
+        } catch (e) {}
+    }
+
+    // 廣告是非同步注入的，初始化時掃一次不夠。這個觀察器讓後來才插進來的廣告
+    // 同樣被拆彈 —— 也順帶修好雙擊手勢：正文被廣告錨點與 onclick 容器鋪滿時，
+    // 手勢會被判成「點在互動元素上」而整片失效。
+    var apStripQueue = [], apStripScheduled = false;
+
+    function apFlushStrip() {
+        apStripScheduled = false;
+        var batch = apStripQueue;
+        apStripQueue = [];
+        for (var i = 0; i < batch.length; i++) apDefuse(batch[i]);
+    }
+
+    function apQueueStrip(node) {
+        if (!node || node.nodeType !== 1) return;
+        // 跳過腳本自己的 UI
+        if (node.id === 'Autopage_number' || node.id === 'Autopage_notice') return;
+        apStripQueue.push(node);
+        if (apStripScheduled) return;
+        apStripScheduled = true;
+        if (window.requestAnimationFrame) requestAnimationFrame(apFlushStrip);
+        else setTimeout(apFlushStrip, 16);
+    }
+
+    function installDomGuard() {
+        // 觀察目標刻意是 document 而不是 document.documentElement：
+        // @run-at document-start 有機會早到連 <html> 都還沒建出來，那時
+        // documentElement 是 null，observe() 會丟例外並被 catch 吞掉 ——
+        // 結果就是觀察器靜默地從沒裝上，延遲注入的廣告完全沒人管。
+        // document 節點一定存在，且 subtree 同樣涵蓋之後長出來的整棵樹。
+        try {
+            new MutationObserver(function(muts) {
+                for (var i = 0; i < muts.length; i++) {
+                    var added = muts[i].addedNodes;
+                    for (var j = 0; j < added.length; j++) {
+                        var n = added[j];
+                        if (!n || n.nodeType !== 1) continue;
+                        if (n.tagName === 'IFRAME') guardIframe(n);
+                        else if (n.querySelectorAll) {
+                            var fs = n.querySelectorAll('iframe');
+                            for (var k = 0; k < fs.length; k++) guardIframe(fs[k]);
+                        }
+                        apQueueStrip(n);
+                    }
+                }
+            }).observe(document, { childList: true, subtree: true });
+        } catch (e) {
+            console.warn('[MyAutoPager] DOM 守衛安裝失敗:', e && e.message);
+        }
+    }
+
     function cleanContent(elements, opts) {
         var keepText = opts && opts.keepText;
         // keepImg：圖片本身即內容的站點（如書籍封面）保留 <img>
@@ -241,8 +404,19 @@
                     e.stopPropagation(); e.preventDefault();
                     return;
                 }
-                if (anchor.getAttribute('target') === '_blank' && anchor.href && isCrossOrigin(anchor.href)) {
-                    console.warn('[MyAutoPager] 攔截跨域 _blank 連結:', anchor.href);
+                var tgt = anchor.getAttribute('target');
+                if (tgt === '_blank' || tgt === '_new') {
+                    if (anchor.href && isCrossOrigin(anchor.href)) {
+                        console.warn('[MyAutoPager] 攔截跨域 _blank 連結:', anchor.href);
+                        e.stopPropagation(); e.preventDefault();
+                        return;
+                    }
+                    // 站內 _blank：不擋死，改成同分頁開啟。預設行為要等事件派發
+                    // 結束才決定，所以在捕獲階段拔掉 target 仍然來得及。
+                    anchor.removeAttribute('target');
+                }
+                // 已被拆彈的錨點（href 被拔掉）不該再有任何動作
+                if (anchor.hasAttribute('data-blocked-href')) {
                     e.stopPropagation(); e.preventDefault();
                     return;
                 }
@@ -910,10 +1084,57 @@
     }
 
     // 互動元素不當手勢起點：小說站正文裡常夾廣告錨點，雙擊等於連點兩次，
-    // 我們至少不把它認成啟動手勢
+    // 我們至少不把它認成啟動手勢。
+    // 刻意不再列入 [onclick]：廣告腳本會把 onclick 掛在包住整段正文的容器上，
+    // 一併排除等於整片正文都無法雙擊 —— 這是「點兩下沒反應」的主因之一。
+    // inline 事件已由 apDefuse 全頁拔除，這裡只要認真正的控制項。
     function asIsInteractive(t) {
         if (!t || t.nodeType !== 1 || !t.closest) return false;
-        return !!t.closest('a,button,input,select,textarea,label,summary,[role="button"],[onclick],[contenteditable]');
+        if (t.closest('button,input,select,textarea,label,summary,[role="button"],[contenteditable]')) return true;
+        var a = t.closest('a');
+        // 已被拆彈的錨點（href 被拔掉）不算互動元素，否則廣告錨點照樣擋住手勢
+        return !!(a && a.getAttribute('href') && !a.hasAttribute('data-blocked-href'));
+    }
+
+    // 判斷這一擊是否落在既有的選取範圍上
+    function asPointInSelection(x, y) {
+        try {
+            var s = window.getSelection();
+            if (!s || s.isCollapsed || !s.rangeCount) return false;
+            var rects = s.getRangeAt(0).getClientRects();
+            for (var i = 0; i < rects.length; i++) {
+                var r = rects[i];
+                if (x >= r.left - 8 && x <= r.right + 8 && y >= r.top - 8 && y <= r.bottom + 8) return true;
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    // 手勢命中後，吞掉這一擊接下來的所有事件。
+    // 不這樣做的話，「點兩下開始自動捲動」同時也是在正文上實實在在點了兩下，
+    // 底下只要壓著廣告錨點或 click 劫持就會開新分頁 —— 正是使用者回報的
+    // 「點擊兩次跳出廣告分頁」。
+    function asSwallowTap() {
+        var evts = ['click', 'auxclick', 'mousedown', 'mouseup', 'pointerup', 'touchend'];
+        var done = false;
+        function teardown() {
+            if (done) return;
+            done = true;
+            evts.forEach(function(n) { document.removeEventListener(n, kill, true); });
+        }
+        function kill(ev) {
+            try {
+                ev.preventDefault();
+                ev.stopPropagation();
+                ev.stopImmediatePropagation();
+            } catch (e) {}
+            if (ev.type === 'click') teardown();
+        }
+        evts.forEach(function(n) {
+            // touchend 等在 Safari 可能被當成 passive，明寫 passive:false 才能 preventDefault
+            document.addEventListener(n, kill, { capture: true, passive: false });
+        });
+        setTimeout(teardown, 700);
     }
 
     // 頁面任意處點兩下＝啟動／停止自動捲頁。
@@ -921,26 +1142,44 @@
     // 且不必攔截第一擊的預設行為（選字、點連結都照常）。
     function asInstallPageTap() {
         var lastT = 0, lastX = 0, lastY = 0;
-        document.addEventListener('pointerdown', function(e) {
-            if (e.isPrimary === false) return;
-            if (e.pointerType === 'mouse' && e.button !== 0) return;
-            var t = e.target;
+
+        function onDown(x, y, target, ev) {
             // 腳本自身 UI 有自己的處理器（含調速手勢）
-            if (t && t.nodeType === 1 && t.closest && t.closest('#Autopage_number')) return;
-            if (asIsInteractive(t)) { lastT = 0; return; }
+            if (target && target.nodeType === 1 && target.closest && target.closest('#Autopage_number')) return;
+            // 點在真正的控制項上：忽略這一擊，但不重設計時 —— 先前會歸零，
+            // 於是正文夾雜廣告錨點時常常要點三、四下才會啟動
+            if (asIsInteractive(target)) return;
 
             var now = performance.now();
             if (now - lastT < AS_TAP_MS &&
-                Math.abs(e.clientX - lastX) < AS_TAP_DIST &&
-                Math.abs(e.clientY - lastY) < AS_TAP_DIST) {
+                Math.abs(x - lastX) < AS_TAP_DIST &&
+                Math.abs(y - lastY) < AS_TAP_DIST) {
                 lastT = 0;
-                // 正在選字（含雙擊選詞）時不搶手勢
-                try { var s = window.getSelection(); if (s && !s.isCollapsed) return; } catch (err) {}
+                // 正在選字時不搶手勢。只在這一擊真的落在選取範圍上才讓開：
+                // 先前是「頁面上有任何反白就放棄」，殘留的反白會讓雙擊永遠失效。
+                if (asPointInSelection(x, y)) return;
+                try { if (ev && ev.cancelable) ev.preventDefault(); } catch (err) {}
+                asSwallowTap();
                 asToggle();
                 return;
             }
-            lastT = now; lastX = e.clientX; lastY = e.clientY;
-        }, true);
+            lastT = now; lastX = x; lastY = y;
+        }
+
+        if (window.PointerEvent) {
+            document.addEventListener('pointerdown', function(e) {
+                if (e.isPrimary === false) return;
+                if (e.pointerType === 'mouse' && e.button !== 0) return;
+                onDown(e.clientX, e.clientY, e.target, e);
+            }, { capture: true, passive: false });
+        } else {
+            // 舊版 Safari / Userscripts 沒有 Pointer Events 時的退路
+            document.addEventListener('touchstart', function(e) {
+                if (!e.touches || e.touches.length !== 1) return;
+                var t = e.touches[0];
+                onDown(t.clientX, t.clientY, e.target, e);
+            }, { capture: true, passive: false });
+        }
 
         // 雙擊在 iOS Safari 原生是「放大」，不抑制的話會同時縮放頁面。
         // manipulation 只關掉雙擊放大，pinch 縮放不受影響。
@@ -989,7 +1228,34 @@
     // ========== 初始化 ==========
 
     matchRule();
+
+    // 彈窗攔截先裝，而且刻意不受兩件事影響：
+    //  1. 不等 GM.getValue —— 那是非同步的，廣告腳本不會等我們；
+    //  2. 不看「停用本站」—— 使用者關掉的是自動翻頁，不是廣告防護，
+    //     沒道理因為關掉翻頁就把廣告分頁放回來。
+    // window.open 的覆寫在 IIFE 最上方已經跑過（@run-at document-start）。
+    installClickGuard();
+    installDomGuard();
+
     if (!curSite) return;
+
+    // @run-at 改成 document-start 之後，以下都需要 DOM 才能動
+    function whenReady(fn) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', fn, { once: true });
+        } else {
+            fn();
+        }
+    }
+
+    whenReady(function() {
+
+    // 首次進站的整頁拆彈：document-start 時 body 還是空的，要等 DOM 就緒才掃得到
+    try { apDefuse(document.documentElement); } catch (e) {}
+    try {
+        var initFrames = document.querySelectorAll('iframe');
+        for (var fi = 0; fi < initFrames.length; fi++) guardIframe(initFrames[fi]);
+    } catch (e) {}
 
     // 檢查是否被禁用。
     // 採「失敗即放行」：整個啟動流程都掛在這個 then 裡，若 GM.getValue 不 resolve
@@ -1023,7 +1289,7 @@
         try {
             if (curSite.style) insStyle(curSite.style);
             try { cleanContent(getAll(curSite.pager.pageE)); } catch (e) {}
-            installClickGuard();
+            // installClickGuard / installDomGuard 已在 document-start 階段裝好
             asLoadSpeed();
             asInstallInterrupt();
             asInstallPageTap();
@@ -1032,6 +1298,8 @@
             // 沒有 console 可看，把錯誤直接顯示在畫面上，否則只會表現為「沒反應」
             apNotice('啟動失敗：' + ((e && e.message) || e), 0);
         }
+    });
+
     });
 
 })();
