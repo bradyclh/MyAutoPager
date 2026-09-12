@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.4.0
+// @version      1.4.1
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -43,71 +43,185 @@
 (function() {
     'use strict';
 
-    // ========== 彈窗攔截（第一層：覆寫 window.open） ==========
-    // 這段的前提是 @run-at document-start。先前掛在 document-end，等於所有頁面
-    // 腳本都跑完才覆寫 —— 廣告載入器早就把原始的 window.open 存進自己的變數，
-    // 之後再怎麼改 window.open 都攔不到，這就是「iPhone 版擋不住廣告分頁」的主因。
-    function apBlockedOpen(url) {
-        console.warn('[MyAutoPager] 攔截 window.open:', url);
-        return null;
-    }
-
-    // 鎖成不可寫、不可重設，頁面腳本沒辦法再改回去
-    function hardenOpen(win) {
-        try {
-            if (!win || win.__apOpenLocked) return;
-            Object.defineProperty(win, 'open', {
-                value: apBlockedOpen, writable: false, configurable: false
-            });
-            try { Object.defineProperty(win, '__apOpenLocked', { value: true }); } catch (e) {}
-        } catch (e) {
-            try { win.open = apBlockedOpen; } catch (e2) {}
+    // ========== 彈窗攔截（第一層：頁面世界的 window.open 鎖） ==========
+    // @inject-into content 讓這支腳本跑在隔離世界：DOM 與頁面共用，JS 全域卻是
+    // 分開的。在這裡覆寫 window.open 只改到自己世界的物件，頁面腳本看到的
+    // window.open 完全沒動 —— 1.4.0 在真機上仍擋不住廣告分頁就是這個原因
+    //（單一世界的測試環境會給出假的通過）。真正的鎖必須塞成 <script> 讓它在
+    // 頁面世界執行。下面這個函式是被 toString() 後整段搬過去跑的，所以不能
+    // 引用任何外部變數，也只能用頁面一定有的 API。
+    function apPageGuardMain() {
+        if (window.__apPageGuard) return;
+        var root = document.documentElement;
+        // 回報給 content 世界：資料放 DOM 屬性而不是 CustomEvent.detail，
+        // detail 物件跨世界不一定讀得到，DOM 屬性一定可以
+        function report(kind, url) {
+            try {
+                root.setAttribute('data-ap-blocked', kind + ' ' + String(url || '').slice(0, 200));
+                root.dispatchEvent(new Event('ap-blocked'));
+            } catch (e) {}
         }
-    }
-    hardenOpen(window);
+        function blockedOpen(url) { report('open', url); return null; }
+        // 鎖成不可寫、不可重設，頁面腳本改不回去
+        function lock(win) {
+            try {
+                if (!win || win.__apOpenLocked) return;
+                Object.defineProperty(win, 'open', { value: blockedOpen, writable: false, configurable: false });
+                Object.defineProperty(win, '__apOpenLocked', { value: true });
+            } catch (e) { try { win.open = blockedOpen; } catch (e2) {} }
+        }
+        lock(window);
 
-    // 第一層之二：iframe。腳本帶 @noframes，不會注入到廣告 iframe 裡，那裡的
-    // window.open 是乾淨的；而「插一個同源 iframe 再呼叫 contentWindow.open」
-    // 更是繞過覆寫的經典手法。兩種都要堵。
+        // 同源 iframe（about:blank / srcdoc）的 contentWindow.open 是乾淨的，
+        // 「插一個 iframe 再呼叫它的 open」是繞過覆寫的經典手法。兩個入口都堵：
+        // 一插進 DOM 就鎖（frames[0] 這條路也走這裡），取 contentWindow 時再鎖一次
+        //（導航後 Window 物件可能換新）。跨域的存取 document 會丟例外 → 略過，
+        // 那些交給 content 世界的 sandbox。
+        function lockFrame(f) {
+            try {
+                var w = f.contentWindow;
+                if (w && w.document) lock(w);
+                // 導航後 Window 物件可能換新，載入完再鎖一次
+                if (!f.__apLoadHooked) { f.__apLoadHooked = true; f.addEventListener('load', function() { lockFrame(f); }); }
+            } catch (e) {}
+        }
+        function lockTree(n) {
+            try {
+                if (!n || n.nodeType !== 1) return;
+                if (n.tagName === 'IFRAME') { lockFrame(n); return; }
+                if (!n.querySelectorAll) return;
+                var fs = n.querySelectorAll('iframe');
+                for (var k = 0; k < fs.length; k++) lockFrame(fs[k]);
+            } catch (e) {}
+        }
+        // MutationObserver 是 microtask，來不及應付「插入 iframe → 同一行就拿
+        // frames[n].open」這種同步寫法（frames[] 不經 contentWindow getter）。
+        // 所以插入 DOM 的常用方法也包一層，在插入的當下就鎖。
+        function wrapInsert(proto, name) {
+            try {
+                var orig = proto[name];
+                if (typeof orig !== 'function') return;
+                Object.defineProperty(proto, name, {
+                    value: function() {
+                        var r = orig.apply(this, arguments);
+                        for (var i = 0; i < arguments.length; i++) {
+                            var a = arguments[i];
+                            // DocumentFragment 插入後已清空，改掃目標節點
+                            if (a && a.nodeType === 11) lockTree(this); else lockTree(a);
+                        }
+                        return r;
+                    },
+                    writable: true, configurable: true
+                });
+            } catch (e) {}
+        }
+        wrapInsert(Node.prototype, 'appendChild');
+        wrapInsert(Node.prototype, 'insertBefore');
+        wrapInsert(Element.prototype, 'append');
+        wrapInsert(Element.prototype, 'prepend');
+        // 其餘插入路徑（innerHTML、parser 解析出來的）由觀察器補上
+        try {
+            new MutationObserver(function(muts) {
+                for (var i = 0; i < muts.length; i++) {
+                    var added = muts[i].addedNodes;
+                    for (var j = 0; j < added.length; j++) lockTree(added[j]);
+                }
+            }).observe(document, { childList: true, subtree: true });
+        } catch (e) {}
+        try {
+            var d = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+            if (d && d.get) {
+                Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+                    get: function() {
+                        var w = d.get.call(this);
+                        try { if (w && w.document) lock(w); } catch (e) {}
+                        return w;
+                    },
+                    configurable: true
+                });
+            }
+        } catch (e) {}
+
+        // 程式化點擊：a.click() 若錨點還沒進 DOM，事件傳不到 document，
+        // 點擊守衛攔不到，瀏覽器卻照樣開新分頁。只影響腳本呼叫的 .click()。
+        try {
+            var nativeClick = HTMLAnchorElement.prototype.click;
+            HTMLAnchorElement.prototype.click = function() {
+                var raw = '', tgt = null;
+                try { raw = this.getAttribute('href') || ''; tgt = this.getAttribute('target'); } catch (e) {}
+                var isJs = raw.toLowerCase().replace(/\s/g, '').indexOf('javascript:') === 0;
+                if (isJs || tgt === '_blank' || tgt === '_new') { report('click', raw); return; }
+                return nativeClick.apply(this, arguments);
+            };
+        } catch (e) {}
+
+        try { Object.defineProperty(window, '__apPageGuard', { value: true }); } catch (e) {}
+        // 這個標記讓 content 世界知道守衛真的跑起來了（被 CSP 擋掉就不會有）
+        root.setAttribute('data-ap-pageguard', '1');
+    }
+
+    var pageGuardOk = false;
+
+    // document-start 有機會早到連 <html> 都還沒建出來；需要根節點的動作都走這裡
+    function whenRoot(fn) {
+        if (document.documentElement) { fn(); return; }
+        try {
+            var mo = new MutationObserver(function() {
+                if (document.documentElement) { mo.disconnect(); fn(); }
+            });
+            mo.observe(document, { childList: true });
+        } catch (e) {}
+    }
+
+    function installPageGuard() {
+        whenRoot(function() {
+            try {
+                var sc = document.createElement('script');
+                sc.textContent = '(' + apPageGuardMain.toString() + ')();';
+                (document.head || document.documentElement).appendChild(sc);
+                if (sc.parentNode) sc.parentNode.removeChild(sc);
+            } catch (e) {}
+            // 內嵌 <script> 是同步執行的：到這裡標記不是已經在、就是被 CSP 擋掉了
+            pageGuardOk = document.documentElement.getAttribute('data-ap-pageguard') === '1';
+            if (!pageGuardOk) console.warn('[MyAutoPager] 頁面守衛未生效（多半是網站 CSP 擋掉內嵌 script），只剩 DOM 層攔截');
+        });
+    }
+
+    // 攔截回饋：iPhone 上沒 console，擋掉了什麼要畫在畫面上，使用者才分得清
+    // 「有擋、但另有漏網之魚」和「根本沒在擋」
+    var apBlockedCount = 0;
+    function apReportBlocked(kind) {
+        apBlockedCount++;
+        apNotice('已攔截 ' + apBlockedCount + ' 次彈窗（' + kind + '）', 3000);
+    }
+    function installBlockFeedback() {
+        whenRoot(function() {
+            document.documentElement.addEventListener('ap-blocked', function() {
+                var what = '';
+                try { what = (document.documentElement.getAttribute('data-ap-blocked') || '').split(' ')[0]; } catch (e) {}
+                apReportBlocked(what || 'open');
+            });
+        });
+    }
+
+    // 第一層之二：跨域 iframe。腳本帶 @noframes，不會注入到廣告 iframe 裡，
+    // 那裡的 window.open 是乾淨的，contentWindow 也碰不到，改用 sandbox：
+    // 少了 allow-popups / allow-top-navigation，瀏覽器自己就會擋掉彈窗。
+    // 同源 iframe 交給頁面世界的守衛。
     var AP_IFRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
 
     function guardIframe(f) {
         try {
             var src = f.getAttribute('src') || '';
-            if (src && isCrossOrigin(src)) {
-                // 跨域 iframe 的 contentWindow 碰不到，改用 sandbox：少了
-                // allow-popups / allow-top-navigation，瀏覽器自己就會擋掉彈窗。
-                // 只在頁面沒自己設過 sandbox 時才加，免得放寬既有限制。
-                if (f.getAttribute('sandbox') === null) f.setAttribute('sandbox', AP_IFRAME_SANDBOX);
-                return;
-            }
-            // 同源（含 about:blank / srcdoc）：直接鎖掉它的 open
-            hardenOpen(f.contentWindow);
-            f.addEventListener('load', function() { hardenOpen(f.contentWindow); });
+            if (!src || !isCrossOrigin(src)) return;
+            // 只在頁面沒自己設過 sandbox 時才加，免得放寬既有限制
+            if (f.getAttribute('sandbox') !== null) return;
+            f.setAttribute('sandbox', AP_IFRAME_SANDBOX);
+            // sandbox 要到下一次導航才生效，而 iframe 一插進 DOM 就開始載入，
+            // 觀察器接手時可能已經在載了：重設 src 強制它在 sandbox 下重載
+            f.setAttribute('src', src);
         } catch (e) {}
     }
-
-    // 第一層之三：程式化點擊。a.click() 若錨點還沒進 DOM，事件根本傳不到
-    // document，下面的點擊守衛攔不到，瀏覽器卻照樣開新分頁。
-    // 只影響腳本呼叫的 .click()：使用者真的用手指點，走的不是這條路徑。
-    try {
-        var apNativeClick = HTMLAnchorElement.prototype.click;
-        Object.defineProperty(HTMLAnchorElement.prototype, 'click', {
-            value: function() {
-                var raw = '';
-                try { raw = this.getAttribute('href') || ''; } catch (e) {}
-                var isJs = raw.toLowerCase().replace(/\s/g, '').indexOf('javascript:') === 0;
-                var tgt = null;
-                try { tgt = this.getAttribute('target'); } catch (e) {}
-                if (isJs || tgt === '_blank' || tgt === '_new') {
-                    console.warn('[MyAutoPager] 攔截程式化 a.click():', raw);
-                    return;
-                }
-                return apNativeClick.apply(this, arguments);
-            },
-            writable: true, configurable: true
-        });
-    } catch (e) {}
 
     // ========== DOM 選擇器 ==========
 
@@ -395,6 +509,17 @@
             if (t.id === 'Autopage_number' || (t.closest && t.closest('#Autopage_number'))) return;
             if (t.id === 'Autopage_notice' || (t.closest && t.closest('#Autopage_notice'))) return;
 
+            // 是否落在正文範圍（下面 A、B 都要用）
+            var inContent = false;
+            if (curSite && curSite.pager.pageE) {
+                try {
+                    var contentEls = getAll(curSite.pager.pageE);
+                    for (var i = 0; i < contentEls.length; i++) {
+                        if (contentEls[i].contains(t)) { inContent = true; break; }
+                    }
+                } catch (err) {}
+            }
+
             // A. 無條件攔截危險錨點（javascript: 協議 / 跨域 target=_blank）
             var anchor = t.closest ? t.closest('a') : null;
             if (anchor) {
@@ -402,6 +527,7 @@
                 if (rawHref.toLowerCase().replace(/\s/g, '').indexOf('javascript:') === 0) {
                     console.warn('[MyAutoPager] 攔截 javascript: 連結');
                     e.stopPropagation(); e.preventDefault();
+                    apReportBlocked('javascript:');
                     return;
                 }
                 var tgt = anchor.getAttribute('target');
@@ -409,28 +535,30 @@
                     if (anchor.href && isCrossOrigin(anchor.href)) {
                         console.warn('[MyAutoPager] 攔截跨域 _blank 連結:', anchor.href);
                         e.stopPropagation(); e.preventDefault();
+                        apReportBlocked('_blank');
                         return;
                     }
-                    // 站內 _blank：不擋死，改成同分頁開啟。預設行為要等事件派發
-                    // 結束才決定，所以在捕獲階段拔掉 target 仍然來得及。
+                    if (inContent) {
+                        // 正文裡沒有任何正當理由開新分頁；站內網址常是廣告的跳轉頁
+                        console.warn('[MyAutoPager] 攔截正文內 _blank 連結:', anchor.href);
+                        e.stopPropagation(); e.preventDefault();
+                        apReportBlocked('_blank');
+                        return;
+                    }
+                    // 正文以外的站內 _blank：不擋死，改成同分頁開啟。預設行為要等
+                    // 事件派發結束才決定，所以在捕獲階段拔掉 target 仍然來得及。
                     anchor.removeAttribute('target');
                 }
                 // 已被拆彈的錨點（href 被拔掉）不該再有任何動作
                 if (anchor.hasAttribute('data-blocked-href')) {
                     e.stopPropagation(); e.preventDefault();
+                    apReportBlocked('已拆彈錨點');
                     return;
                 }
             }
 
             // B. 放行 pageE 內容範圍
-            if (curSite && curSite.pager.pageE) {
-                try {
-                    var contentEls = getAll(curSite.pager.pageE);
-                    for (var i = 0; i < contentEls.length; i++) {
-                        if (contentEls[i].contains(t)) return;
-                    }
-                } catch (err) {}
-            }
+            if (inContent) return;
 
             // C. 偵測可疑全頁/半頁固定覆蓋層
             var rect = t.getBoundingClientRect();
@@ -444,6 +572,7 @@
                         console.warn('[MyAutoPager] 攔截可疑覆蓋層點擊', t);
                         e.stopPropagation();
                         e.preventDefault();
+                        apReportBlocked('覆蓋層');
                     }
                 }
             }
@@ -1233,7 +1362,8 @@
     //  1. 不等 GM.getValue —— 那是非同步的，廣告腳本不會等我們；
     //  2. 不看「停用本站」—— 使用者關掉的是自動翻頁，不是廣告防護，
     //     沒道理因為關掉翻頁就把廣告分頁放回來。
-    // window.open 的覆寫在 IIFE 最上方已經跑過（@run-at document-start）。
+    installPageGuard();
+    installBlockFeedback();
     installClickGuard();
     installDomGuard();
 
@@ -1284,7 +1414,9 @@
         // 「腳本有在跑、跑的是哪一版、命中哪條規則」的方式
         var ver = '';
         try { ver = (GM.info && GM.info.script && GM.info.script.version) || ''; } catch (e) {}
-        apNotice('已啟用' + (ver ? ' v' + ver : '') + '（規則：' + matchedKey + '）', 4000);
+        // 頁面守衛狀態一起顯示：被 CSP 擋掉時使用者才知道彈窗攔截只剩 DOM 層
+        apNotice('已啟用' + (ver ? ' v' + ver : '') + '（規則：' + matchedKey + '）' +
+            (pageGuardOk ? '｜頁面守衛 OK' : '｜頁面守衛被擋（CSP）'), pageGuardOk ? 4000 : 10000);
 
         try {
             if (curSite.style) insStyle(curSite.style);

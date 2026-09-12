@@ -114,6 +114,14 @@ window.__bypassOpen = function () {
     catch (e) { return false; }
 };
 
+// 另一條繞過：不經 contentWindow getter，直接用 frames[] 拿子視窗
+window.__framesOpen = function () {
+    var f = document.createElement('iframe');
+    document.body.appendChild(f);
+    try { return !!window.frames[window.frames.length - 1].open('http://ads.example.com/frames', '_blank'); }
+    catch (e) { return false; }
+};
+
 // 分離的錨點：還沒進 DOM，click 事件傳不到 document
 window.__detachedClick = function () {
     var a = document.createElement('a');
@@ -152,8 +160,16 @@ function check(name, ok, detail) {
     });
 
     const page = await ctx.newPage();
-    // @run-at document-start：必須在頁面腳本之前跑，這正是修正的重點
-    await page.addInitScript(GM_SHIM + '\n' + BODY);
+    // 用 CDP 把腳本注入「隔離世界」，而不是 page.addInitScript（主世界）。
+    // Safari Userscripts App 的 @inject-into content 就是隔離世界：DOM 共用、
+    // JS 全域分開。在主世界測會得到假的通過 —— 覆寫 window.open 看似有效，
+    // 真機上頁面腳本卻根本看不到那個覆寫。
+    const cdp = await ctx.newCDPSession(page);
+    await cdp.send('Page.enable');
+    await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+        source: GM_SHIM + '\n' + BODY,
+        worldName: 'userscript-isolated',
+    });
 
     const logs = [];
     page.on('console', (m) => logs.push(m.text()));
@@ -162,19 +178,33 @@ function check(name, ok, detail) {
     await page.waitForTimeout(400);
 
     // --- 腳本有啟動 ---
-    check('腳本有注入並命中規則',
-        logs.some((l) => l.includes('匹配: 69shuba_com')),
-        `console 沒看到匹配訊息，實際：${logs.slice(0, 5).join(' | ')}`);
+    const notice = await page.evaluate(() => {
+        const h = document.getElementById('Autopage_notice');
+        return h && h.shadowRoot ? h.shadowRoot.querySelector('#n').textContent : '';
+    });
+    check('腳本有注入並命中規則', /規則：69shuba_com/.test(notice),
+        `畫面提示：${JSON.stringify(notice)}；console：${logs.slice(0, 5).join(' | ')}`);
+    check('啟動提示標明頁面守衛 OK', /頁面守衛 OK/.test(notice), `畫面提示：${JSON.stringify(notice)}`);
 
     // --- 1. window.open 覆寫早於頁面腳本 ---
     const savedOpenBlocked = await page.evaluate(
         () => window.__savedOpen('http://ads.example.com/direct') === null);
     check('頁面腳本提前存起來的 window.open 也被攔截（document-start 的關鍵）',
         savedOpenBlocked, '頁面腳本快取的參考仍然可用 —— 覆寫跑太晚');
+    await page.waitForTimeout(50);
+    const blockedNotice = await page.evaluate(() => {
+        const h = document.getElementById('Autopage_notice');
+        return h && h.shadowRoot ? h.shadowRoot.querySelector('#n').textContent : '';
+    });
+    check('攔截到彈窗時畫面有回饋', /已攔截 \d+ 次彈窗/.test(blockedNotice),
+        `畫面提示：${JSON.stringify(blockedNotice)}`);
 
     // --- 2. 同源 iframe contentWindow.open 繞過 ---
     const bypassed = await page.evaluate(() => window.__bypassOpen());
     check('同源 iframe 的 contentWindow.open 繞過被堵住', bypassed === false);
+
+    const framesBypass = await page.evaluate(() => window.__framesOpen());
+    check('window.frames[n].open 繞過（不經 contentWindow getter）被堵住', framesBypass === false);
 
     // --- 3. 分離錨點的程式化 click ---
     await page.evaluate(() => window.__detachedClick());
@@ -300,6 +330,37 @@ function check(name, ok, detail) {
         !lateAfter.clicked && !lateAfter.opened, JSON.stringify(lateAfter));
     check('在「延遲插入正文」的廣告上點兩下仍能啟動自動捲動',
         lateAfter.bg !== '' && lateAfter.bg !== '?', `按鈕背景色=${JSON.stringify(lateAfter.bg)}`);
+
+    // --- 10. 網站有 CSP、內嵌 script 被擋：要優雅退化，並在畫面上講明 ---
+    // 頁面守衛靠塞 <script> 進頁面世界；遇到 script-src 用 nonce 的站台會被擋。
+    // 這時不能整個死掉：DOM 層攔截照常，啟動提示要標明守衛被擋。
+    const CSP_PAGE = PAGE.replace('<script>', '<script nonce="n1">');
+    await ctx.route('**/csp', (route) => route.fulfill({
+        status: 200,
+        contentType: 'text/html; charset=utf-8',
+        headers: { 'Content-Security-Policy': "script-src 'nonce-n1'" },
+        body: CSP_PAGE,
+    }));
+    const cspPage = await ctx.newPage();
+    const cdp2 = await ctx.newCDPSession(cspPage);
+    await cdp2.send('Page.enable');
+    await cdp2.send('Page.addScriptToEvaluateOnNewDocument', {
+        source: GM_SHIM + '\n' + BODY, worldName: 'userscript-isolated',
+    });
+    await cspPage.goto('http://www.69shuba.com/txt/89438/csp');
+    await cspPage.waitForTimeout(400);
+    const csp = await cspPage.evaluate(() => ({
+        marker: document.documentElement.getAttribute('data-ap-pageguard'),
+        btn: !!document.getElementById('Autopage_number'),
+        notice: (() => {
+            const h = document.getElementById('Autopage_notice');
+            return h && h.shadowRoot ? h.shadowRoot.querySelector('#n').textContent : '';
+        })(),
+        adHref: document.getElementById('adlink').getAttribute('href'),
+    }));
+    check('CSP 擋掉頁面守衛時腳本其餘部分照常啟動', csp.marker === null && csp.btn, JSON.stringify(csp));
+    check('CSP 擋掉頁面守衛時啟動提示有標明', /頁面守衛被擋/.test(csp.notice), `畫面提示：${JSON.stringify(csp.notice)}`);
+    check('CSP 擋掉頁面守衛時 DOM 層攔截仍在（廣告錨點已拆彈）', csp.adHref === null, JSON.stringify(csp));
 
     await browser.close();
 

@@ -33,7 +33,9 @@ node test/static.test.js
 PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node test/guards.e2e.js
 ```
 
-離線、headless、可重現。它不連真站台，而是起一個**仿 69shuba 廣告手法**的合成頁面：
+離線、headless、可重現。腳本是透過 CDP 注入到**隔離世界**（`worldName`），不是 `page.addInitScript` 的主世界 —— Safari Userscripts App 的 `@inject-into content` 就是隔離世界：DOM 共用、JS 全域分開。在主世界測會得到假的通過：覆寫 `window.open` 看似有效，真機上頁面腳本根本看不到（1.4.0 就是這樣漏掉的）。
+
+它不連真站台，而是起一個**仿 69shuba 廣告手法**的合成頁面：
 頁面腳本在解析階段就把 `window.open` 存進自己的變數、廣告錨點在初始化「之後」
 才插進正文、跨域 iframe 延遲注入。這些都是真實站台用過的作法。
 
@@ -45,6 +47,7 @@ PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node test/guards.e2e.js
 - **初始化之後**才插進正文的廣告也會被拆彈（MutationObserver）
 - 站內 `_blank` 只拔 `target`、保留 `href`（不能把站內導覽弄死）
 - 在正文與在廣告錨點上點兩下，都能啟動／停止自動捲動，且**不會觸發底下的廣告**
+- 網站用 CSP 擋掉內嵌 script 時，腳本其餘部分照常啟動、啟動提示標明守衛被擋、DOM 層攔截仍在
 
 沒裝 playwright 時會直接略過並回傳 0，不會擋住其他測試。
 
