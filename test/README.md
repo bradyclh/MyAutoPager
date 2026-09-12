@@ -1,10 +1,11 @@
 # 測試
 
-兩層，各自抓不同類型的問題。改完規則兩層都跑一次。
+三層，各自抓不同類型的問題。改完規則三層都跑一次。
 
 | | 執行方式 | 需要網路 | 抓什麼 |
 |---|---|---|---|
 | 靜態檢查 | `node test/static.test.js` | 否 | 規則沒註冊、`@match` 漏掉、兩版不同步、規則太寬 |
+| 守衛 e2e | `node test/guards.e2e.js` | 否 | 廣告彈窗擋不住、點兩下順手點到廣告、手勢失效 |
 | 瀏覽器 e2e | 注入頁面後呼叫 `APE2E.*` | 是 | 翻頁沒發生、樣式不一致、功能列重複、末章沒停 |
 
 ## 靜態檢查
@@ -25,6 +26,27 @@ node test/static.test.js
 - 章節頁能匹配到預期規則、非章節頁不會誤匹配
 
 `@match` 那項是實際踩過的坑：iPhone 版有 `qimao` 規則，但 `@match` 從沒加過 qimao.com，所以那條規則在 iPhone 上根本不會被注入。症狀跟「規則寫錯」一模一樣，卻更難察覺。
+
+## 守衛 e2e（iPhone 版彈窗攔截與雙擊手勢）
+
+```bash
+PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node test/guards.e2e.js
+```
+
+離線、headless、可重現。它不連真站台，而是起一個**仿 69shuba 廣告手法**的合成頁面：
+頁面腳本在解析階段就把 `window.open` 存進自己的變數、廣告錨點在初始化「之後」
+才插進正文、跨域 iframe 延遲注入。這些都是真實站台用過的作法。
+
+測的是與站台無關、但 `APE2E.run()` 完全涵蓋不到的行為：
+
+- 頁面提前快取的 `window.open` 仍被攔截（`@run-at document-start` 的意義）
+- 同源 iframe 的 `contentWindow.open` 繞過、未進 DOM 的 `a.click()` 都堵得住
+- 跨域 iframe 被加上不含 `allow-popups` 的 `sandbox`
+- **初始化之後**才插進正文的廣告也會被拆彈（MutationObserver）
+- 站內 `_blank` 只拔 `target`、保留 `href`（不能把站內導覽弄死）
+- 在正文與在廣告錨點上點兩下，都能啟動／停止自動捲動，且**不會觸發底下的廣告**
+
+沒裝 playwright 時會直接略過並回傳 0，不會擋住其他測試。
 
 ## 瀏覽器 e2e
 
