@@ -120,6 +120,29 @@ return [
             hiddenAds: ['.txtcenter'],
         },
     },
+    {
+        key: 'novelstw',
+        verified: true,
+        // 一章拆成多頁：第一頁 <id>.html，之後 <id>_2.html、<id>_3.html
+        chapter: [
+            ['www.novels.com.tw', '/novels/nof547827720147a5ed94d182d308ad865d4da6629d886fb178b8b21e343c30336/206331926.html'],
+            ['www.novels.com.tw', '/novels/nof547827720147a5ed94d182d308ad865d4da6629d886fb178b8b21e343c30336/206331926_2.html'],
+        ],
+        // 書頁（末章末頁的「沒有了」也指向這裡）
+        notChapter: [['www.novels.com.tw', '/novels/nof547827720147a5ed94d182d308ad865d4da6629d886fb178b8b21e343c30336/']],
+        e2e: {
+            // 從某章最後一頁起跑：同章各頁的 <title> 相同，起跑在章首會讓「文件標題已更新」誤報
+            start: 'https://www.novels.com.tw/novels/nof547827720147a5ed94d182d308ad865d4da6629d886fb178b8b21e343c30336/206331926_3.html',
+            last: 'https://www.novels.com.tw/novels/nof547827720147a5ed94d182d308ad865d4da6629d886fb178b8b21e343c30336/206333691_2.html',
+            chapterBlock: '#article',
+            titleEl: '.section_style > .text_title h1',
+            navEl: '.read_nav',
+            // 正文段落（解密後填入的 <p>）
+            textEl: 'p',
+            singletons: ['.text_info'],
+            hiddenAds: [],
+        },
+    },
 ];
 
 }));

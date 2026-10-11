@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.23
+// @version      1.2.24
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -691,6 +691,33 @@
                     // 正文是純文字節點 + <br>，不是 <p>，不會被推廣關鍵字規則掃到，
                     // 故不需 keepText；廣告空殼由 cleanContent 一併清掉。
                     bF: function(pageE) { return cleanContent(pageE); }
+                }
+            },
+            novelstw: {
+                // 繁體小說（novels.com.tw）：一章拆成多頁（206331926.html → _2.html → _3.html），
+                // 正文加密下發，見 novelsTwDecrypt()
+                host: '/(^|\\.)novels\\.com\\.tw$/',
+                url: "/^\\/novels\\/[^\\/]+\\/\\d+(_\\d+)?\\.html/",
+                // 首頁正文中夾的廣告版位（插入的頁面由 cleanContent 清掉）
+                style: '#article ins, #article iframe, #article [id^="div-gpt-ad"], #article [id^="div-tam-ad"], #mys-wrapper {display: none !important;}',
+                history: true, retry: 3000, popupBlock: true,
+                // 正文一句一個 <p>，keepText 防推廣關鍵字誤刪
+                cleanOpts: { keepText: '#article' },
+                pager: {
+                    // 末章末頁的「沒有了」指回書頁（/ 結尾），[href$=".html"] 排除之 → nextL 落空即乾淨停止
+                    nextL: 'a#next_url[href$=".html"]',
+                    // .text_title 含 h1（「第N章 …（2 / 3）」）與書名作者資訊列，#article 是正文
+                    pageE: '.section_style > .text_title, #article',
+                    replaceE: '.read_nav',
+                    scrollD: 2000
+                },
+                function: {
+                    bF: function(pageE) {
+                        // 書名／作者／字數資訊列每頁都有，只留首頁那份
+                        pageE.forEach(function(el) { getAllCSS('.text_info', el).forEach(function(n) { n.remove(); }); });
+                        // 解密必須在 cleanContent 之前：cleanContent 會移除裝著密文的 <script>
+                        return cleanContent(novelsTwDecrypt(pageE), {keepText: '#article'});
+                    }
                 }
             },
 
@@ -1830,6 +1857,40 @@
                 // 只對短文字元素檢查推廣關鍵字（避免誤刪包含正文的大容器）
                 if (txt.length < 200 && (txt.indexOf('溫馨提示') > -1 || txt.indexOf('VIP') > -1 || txt.indexOf('免廣告') > -1 || txt.indexOf('加入書架') > -1 || txt.indexOf('搜書名') > -1)) { node.remove(); return; }
             });
+        });
+        return pageE;
+    }
+
+    // novels.com.tw 正文以 AES-CBC 加密放在 <script>window.encryptedContent = "..."</script>，
+    // 由站方 gfncgd.js 在 DOMContentLoaded 時解密；XHR 取回的頁面不會執行 script，只拿得到密文。
+    // 金鑰寫死在該 js 的字串表內（跨書通用），IV 全零。WebCrypto 只有非同步 API，而 bF 是同步呼叫，
+    // 所以這裡先把 <article> 換成佔位文字讓插入照常進行，解密完成後再填回同一個節點（插入後參照不變）。
+    // 必須填 <article> 而非內層 #chapter-content：清空的 div 會被 cleanContent 當成空元素移除。
+    const NOVELS_TW_KEY = 'WZc0cbzgY3lhz3X6';
+    function novelsTwDecrypt(pageE) {
+        pageE.forEach(function(el) {
+            if (el.id !== 'article') return;
+            let src = getAllCSS('script', el).map(function(s) { return s.textContent; })
+                .filter(function(t) { return t.indexOf('encryptedContent') > -1; })[0];
+            let m = src && src.match(/encryptedContent\s*=\s*("(?:[^"\\]|\\.)*")/);
+            if (!m) return;
+            let b64 = JSON.parse(m[1]);
+            el.innerHTML = '<p>（MyAutoPager：正文解密中…）</p>';
+            let raw = Uint8Array.from(atob(b64), function(c) { return c.charCodeAt(0); });
+            crypto.subtle.importKey('raw', new TextEncoder().encode(NOVELS_TW_KEY), {name: 'AES-CBC'}, false, ['decrypt'])
+                .then(function(key) { return crypto.subtle.decrypt({name: 'AES-CBC', iv: new Uint8Array(16)}, key, raw); })
+                .then(function(buf) {
+                    let html = new TextDecoder().decode(buf);
+                    // 明文通常已是 <p> 段落；舊格式是純文字換行，比照站方逐行包 <p>
+                    if (html.indexOf('<p') === -1) {
+                        html = html.split('\n').map(function(l) { return l.trim() ? '<p>' + l + '</p>' : '<p><br></p>'; }).join('');
+                    }
+                    el.innerHTML = html;
+                })
+                .catch(function(e) {
+                    console.error('[MyAutoPager] novels.com.tw 正文解密失敗（站方可能已換金鑰）\n', e);
+                    el.innerHTML = '<p>（MyAutoPager：正文解密失敗，站方可能已更換金鑰，請重新整理此頁閱讀）</p>';
+                });
         });
         return pageE;
     }
