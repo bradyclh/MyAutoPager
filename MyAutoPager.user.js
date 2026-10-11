@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.24
+// @version      1.2.25
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -1684,6 +1684,8 @@
 
             // 12. 執行 aF 插入後函數
             callAfterHook();
+            // 插入後重新套用閱讀樣式：CSS 本身已涵蓋新節點，這裡主要是補新容器的 data-ap-bg 標記
+            applyReadingStyle();
         } else {
             // 13. 取得主體元素失敗
             console.log(curSite.pager.pageE, pageE, curSite.pager.insertP, toE, response);
@@ -1829,6 +1831,11 @@
         });
     }
 
+    // 廣告特徵（class / id）。cleanContent 移除廣告容器與 apIsSiteUiControl 判斷錨點是否身處廣告都用它，故抽成共用常數。
+    var AD_CLASS_RE = /\b(gadBlock|clickforce|cfad|ad[-_]?wrap)/i;
+    // 較寬鬆的廣告字樣，只用於判斷站方控制項的祖先鏈，不用來刪除內容（誤刪風險高）
+    var AD_HINT_RE = /\b(ad|ads|advert|banner|sponsor|promo|gpt|taboola|clickforce|onead)\b|(^|[^a-z])ad[-_]/i;
+
     // 清除非文字內容（小說閱讀專用）
     // 移除廣告、圖片、iframe、腳本等非文字元素，以及站點推廣文字，保留純文字閱讀體驗
     // opts.keepText（CSS 選擇器）：該選擇器命中的正文容器內節點，跳過「推廣關鍵字」刪除，
@@ -1848,7 +1855,7 @@
             // 移除廣告容器、站點推廣文字（div 和 p 都檢查）
             el.querySelectorAll('div, p').forEach(function(node) {
                 // 移除廣告容器 class
-                if (node.className && /\b(gadBlock|clickforce|cfad|ad[-_]?wrap)/i.test(node.className)) { node.remove(); return; }
+                if (node.className && AD_CLASS_RE.test(node.className)) { node.remove(); return; }
                 var txt = node.textContent.trim();
                 // 移除空元素（無文字、無子元素）
                 if (!txt && node.children.length === 0) { node.remove(); return; }
@@ -1895,6 +1902,71 @@
         return pageE;
     }
 
+    // ---- 站方閱讀設定控制項放行（字級、夜間模式、背景…）----
+    // 站方的設定按鈕常寫成 href="javascript:isnight();" 或 href="javascript:;"（點擊由 jQuery 綁定），
+    // 一律攔截會連同設定功能一起失效。這裡只放行窄幅判定為「設定控制項」的錨點，其餘照舊攔截。
+    // 放行的只是站方自己的 handler；window.open 鎖與 iframe 守衛不動，即使它偷開分頁仍會被擋下。
+    var SITE_UI_FN_RE = /(size|font|zoom|night|dark|day|light|theme|skin|color|colour|bg|background|mode|cog|setting|config|style|width|line|spacing|bookmark|shelf)/i;
+    var SITE_UI_CTX_RE = /(set|cog|control|tool|font|size|theme|skin|night|dark|day|color|bg|read[-_]?set|reader|字|夜|日間|白天|背景|主題|護眼|設定|設置|字號|字体|字體)/i;
+    // 程式碼含這些字樣一律不放行：導頁、開窗、動態執行字串
+    var SITE_UI_FORBID_RE = /open|location|href|window\.|document\.|eval|http/i;
+
+    // 錨點是否落在正文範圍內（curSite.pager.pageE 命中的元素包含它）。
+    // 正文範圍未知時視為不在正文內；選擇器解析失敗則保守視為在正文內（照擋）。
+    function apInsideContent(el) {
+        const sel = curSite && curSite.pager && curSite.pager.pageE;
+        if (!sel) return false;
+        try {
+            return getAll(sel).some(function(node) { return node.contains(el); });
+        } catch (e) {
+            return true;
+        }
+    }
+
+    // 錨點本身與往上最多 6 層（到 body 為止）是否帶廣告特徵的 class / id
+    function apHasAdTrait(el) {
+        for (let n = el, depth = 0; n && n.nodeType === 1 && n !== document.body && depth <= 6; n = n.parentElement, depth++) {
+            const s = (n.getAttribute('class') || '') + ' ' + (n.id || '');
+            if (AD_CLASS_RE.test(s) || AD_HINT_RE.test(s)) return true;
+        }
+        return false;
+    }
+
+    // 錨點本身、往上最多 4 層（到 body 為止）的 class / id / title / aria-label，以及錨點文字，是否像設定控制項。
+    // 到 body 為止：站方常把夜間模式寫成 body 的 class，若算進去，所有空的 javascript: 錨點都會被放行。
+    function apCtxLooksLikeUi(el) {
+        for (let n = el, depth = 0; n && n.nodeType === 1 && n !== document.body && depth <= 4; n = n.parentElement, depth++) {
+            const s = [n.getAttribute('class'), n.id, n.getAttribute('title'), n.getAttribute('aria-label')].join(' ');
+            if (SITE_UI_CTX_RE.test(s)) return true;
+        }
+        return SITE_UI_CTX_RE.test(el.textContent || '');
+    }
+
+    // 判斷 javascript: 錨點是否為站方的閱讀設定控制項；任何例外都視為不放行（維持攔截）
+    function apIsSiteUiControl(anchor) {
+        try {
+            const m = (anchor.getAttribute('href') || '').match(/^\s*javascript:([\s\S]*)$/i);
+            if (!m) return false;
+            // target=_blank 會開新分頁，這條路 window.open 鎖管不到，不放行（與 iPhone 版一致）
+            const tgt = anchor.getAttribute('target');
+            if (tgt === '_blank' || tgt === '_new') return false;
+            // 1. 正文內的 javascript: 一律照擋
+            if (apInsideContent(anchor)) return false;
+            // 2. 錨點或祖先帶廣告特徵，照擋
+            if (apHasAdTrait(anchor)) return false;
+            // 去掉結尾的分號與空白，只比對程式碼本體
+            const code = m[1].trim().replace(/;+$/, '').trim();
+            // 3a. 單純的函式呼叫，且函式名稱像設定類（如 isnight()、changeSize('plus')）
+            const call = code.match(/^([A-Za-z_$][\w$.]*)\s*\([^()]*\)$/);
+            if (call && SITE_UI_FN_RE.test(call[1]) && !SITE_UI_FORBID_RE.test(code)) return true;
+            // 3b. 「空」程式碼（無、void(0)、void 0）：功能靠站方綁定的事件處理，因此上下文要像設定控制項
+            if ((code === '' || /^void\s*(\(\s*0\s*\)|0)$/i.test(code)) && apCtxLooksLikeUi(anchor)) return true;
+            return false;
+        } catch (e) {
+            return false;
+        }
+    }
+
     // 第三層：攔截 document 級別的點擊劫持（僅小說站啟用）
     var clickGuardInstalled = false;
     function installClickGuard() {
@@ -1914,6 +1986,11 @@
             if (anchor) {
                 var rawHref = anchor.getAttribute('href') || '';
                 if (rawHref.toLowerCase().replace(/\s/g, '').indexOf('javascript:') === 0) {
+                    // 站方自己的閱讀設定按鈕也是 javascript: 錨點，窄幅判定為設定控制項者放行，讓站方 handler 照常執行
+                    if (apIsSiteUiControl(anchor)) {
+                        console.info('[MyAutoPager] 放行站方設定控制項:', rawHref);
+                        return;
+                    }
                     console.warn('[MyAutoPager] 攔截 javascript: 連結');
                     e.stopPropagation(); e.preventDefault();
                     return;
@@ -2218,6 +2295,94 @@
         insStyle('body {touch-action: manipulation;}');
     }
 
+    // ========== 閱讀樣式（小說站）==========
+    // 站方正文的字級與配色常與閱讀背景衝突（例如正文 <p> 帶 inline color），
+    // 這裡用一張可更新的 <style> 統一套用字級、行高與背景，設定存於 GM 儲存。
+    // 只在命中小說站規則（popupBlock）時生效，其餘頁面不碰站方樣式。
+
+    const READING_FONT_DEFAULT = 20, READING_FONT_MIN = 14, READING_FONT_MAX = 32, READING_FONT_STEP = 2;
+    const READING_LINE_HEIGHT = 1.8;   // 固定值，不提供 UI
+    var READING_THEMES = {
+        paper: { name: '米黃', bg: '#f6f1e3', fg: '#2b2b2b' },
+        white: { name: '純白', bg: '#ffffff', fg: '#222222' },
+        green: { name: '護眼綠', bg: '#cce8cf', fg: '#1f2d1f' },
+        night: { name: '夜間', bg: '#1e1e1e', fg: '#c8c8c8' }
+    };
+    var READING_THEME_ORDER = ['paper', 'white', 'green', 'night'];
+    var readingStyleOn = true, readingFontSize = READING_FONT_DEFAULT, readingTheme = 'paper';
+
+    // 命中小說站規則才可用（與 popupBlockEnabled 同一判準，但不依賴 initSite 的執行順序）
+    function readingStyleEligible() {
+        return !!(curSite && curSite.popupBlock);
+    }
+
+    // 讀取設定；值不合法時退回預設，避免 GM 儲存被改壞後整頁樣式失效
+    function loadReadingCfg() {
+        readingStyleOn = GM_getValue('menu_readingStyleOn', true) !== false;
+        const fs = parseInt(GM_getValue('menu_readingFontSize', READING_FONT_DEFAULT), 10);
+        readingFontSize = isNaN(fs) ? READING_FONT_DEFAULT : Math.min(READING_FONT_MAX, Math.max(READING_FONT_MIN, fs));
+        const th = GM_getValue('menu_readingTheme', 'paper');
+        readingTheme = READING_THEME_ORDER.indexOf(th) !== -1 ? th : 'paper';
+    }
+
+    function saveReadingCfg() {
+        GM_setValue('menu_readingStyleOn', readingStyleOn);
+        GM_setValue('menu_readingFontSize', readingFontSize);
+        GM_setValue('menu_readingTheme', readingTheme);
+    }
+
+    function clearReadingMarks() {
+        document.querySelectorAll('[data-ap-bg]').forEach(function(el) { el.removeAttribute('data-ap-bg'); });
+    }
+
+    // 套用閱讀樣式。關閉或未命中時清空樣式與標記，SPA 導航後不會殘留上一頁的樣式
+    function applyReadingStyle() {
+        let styleEl = document.getElementById('ap-reading-style');
+        if (!(readingStyleOn && readingStyleEligible())) {
+            if (styleEl) styleEl.textContent = '';
+            clearReadingMarks();
+            return;
+        }
+        // 同一頁只保留一張樣式表，之後只更新內容，不重複插入
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'ap-reading-style';
+            (document.head || document.documentElement).appendChild(styleEl);
+        }
+        const t = READING_THEMES[readingTheme];
+        const sel = (curSite.pager && typeof curSite.pager.pageE === 'string') ? curSite.pager.pageE.trim() : '';
+        // XPath 規則無法對應成 CSS 選擇器，只套背景，正文字級與配色維持站方原樣
+        const textSel = sel && !/^(\/|\(|\.\/|id\()/.test(sel) ? sel : '';
+        let css = 'html, body { background: ' + t.bg + ' !important; }\n' +
+                  '[data-ap-bg] { background: ' + t.bg + ' !important; }\n';
+        if (textSel) {
+            // :is() 包住整串選擇器，就不必自己切逗號（選擇器內可能有 :not(:has(a, b)) 之類的逗號）
+            const s = ':is(' + textSel + ')';
+            css += s + ', ' + s + ' * { color: ' + t.fg + ' !important; font-size: ' + readingFontSize + 'px !important; line-height: ' + READING_LINE_HEIGHT + ' !important; background-color: transparent !important; }\n';
+            // 標題放大 1.3 倍。特異性高於上面的 `* {}`，所以不靠規則順序也能蓋過正文字級
+            css += s + ' :is(h1, h2, h3), ' + s + ':is(h1, h2, h3) { font-size: ' + Math.round(readingFontSize * 1.3) + 'px !important; }\n';
+        }
+        styleEl.textContent = css;
+
+        // 正文的祖先標上 data-ap-bg，站方容器自帶的底色才會一起換成閱讀背景（只標到 body 之前）。
+        // 每次都重標：翻頁後 DOM 會變，舊標記未必還是正文的祖先
+        clearReadingMarks();
+        if (sel) {
+            let first = null;
+            try { first = getOne(sel); } catch (e) {}
+            for (let p = first ? first.parentElement : null; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+                p.setAttribute('data-ap-bg', '1');
+            }
+        }
+    }
+
+    // 設定變更：存檔、套用、重建選單（標籤要跟著更新）
+    function readingChanged() {
+        saveReadingCfg();
+        applyReadingStyle();
+        registerMenuCommand();
+    }
+
     function registerMenuCommand() {
         menuId.forEach(id => { try { GM_unregisterMenuCommand(id); } catch(e){} });
         menuId = [];
@@ -2254,6 +2419,26 @@
             GM_setValue('menu_autoScrollSpeed', asSpeed);
             registerMenuCommand();
         }));
+
+        // 6. 閱讀樣式（只在小說站命中時顯示；每個動作即時套用、存檔，再重建選單更新標籤）
+        if (readingStyleEligible()) {
+            menuId.push(GM_registerMenuCommand('🅰 閱讀樣式：' + (readingStyleOn ? '開' : '關（使用原網站）'), function() {
+                readingStyleOn = !readingStyleOn;
+                readingChanged();
+            }));
+            menuId.push(GM_registerMenuCommand('🔠 字級 +2（目前 ' + readingFontSize + 'px）', function() {
+                readingFontSize = Math.min(READING_FONT_MAX, readingFontSize + READING_FONT_STEP);
+                readingChanged();
+            }));
+            menuId.push(GM_registerMenuCommand('🔡 字級 −2', function() {
+                readingFontSize = Math.max(READING_FONT_MIN, readingFontSize - READING_FONT_STEP);
+                readingChanged();
+            }));
+            menuId.push(GM_registerMenuCommand('🎨 背景：' + READING_THEMES[readingTheme].name + '（點擊換下一個）', function() {
+                readingTheme = READING_THEME_ORDER[(READING_THEME_ORDER.indexOf(readingTheme) + 1) % READING_THEME_ORDER.length];
+                readingChanged();
+            }));
+        }
     }
 
     function menu_switch(status, name) {
@@ -2436,6 +2621,9 @@
                 try { cleanContent(getAll(curSite.pager.pageE), curSite.cleanOpts); } catch (e) {}
             }
         }
+        // 閱讀樣式：先讀設定（選單標籤要用），再套用。每次初始化都重做，SPA 導航後換到非小說站時會清掉殘留樣式
+        loadReadingCfg();
+        applyReadingStyle();
         // 自動捲頁只需初始化一次（SPA 導航會重進 initSite，不可重複掛監聽）；
         // 必須早於 registerMenuCommand()，否則菜單標籤會顯示預設值而非已存速度
         if (!asInstalled) {
