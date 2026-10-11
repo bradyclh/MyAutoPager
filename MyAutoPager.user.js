@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.25
+// @version      1.2.26
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -1979,7 +1979,7 @@
             if (!t || t.nodeType !== 1) return;
 
             // 放行腳本自身 UI
-            if (t.id === 'Autopage_number' || (t.closest && t.closest('#Autopage_number'))) return;
+            if (t.id === 'Autopage_number' || t.id === 'Autopage_reading' || (t.closest && t.closest('#Autopage_number, #Autopage_reading'))) return;
 
             // A. 攔截危險錨點（javascript: 協議 / 跨域 target=_blank）
             var anchor = t.closest ? t.closest('a') : null;
@@ -2274,7 +2274,7 @@
             if (e.pointerType === 'mouse' && e.button !== 0) return;
             const t = e.target;
             // 腳本自身 UI 有自己的處理器
-            if (t && t.nodeType === 1 && t.closest && t.closest('#Autopage_number')) return;
+            if (t && t.nodeType === 1 && t.closest && t.closest('#Autopage_number, #Autopage_reading')) return;
             if (asIsInteractive(t)) { lastT = 0; return; }
 
             const now = performance.now();
@@ -2376,11 +2376,112 @@
         }
     }
 
-    // 設定變更：存檔、套用、重建選單（標籤要跟著更新）
+    // 設定變更：存檔、套用、更新面板
     function readingChanged() {
         saveReadingCfg();
         applyReadingStyle();
-        registerMenuCommand();
+        renderReadingPanel();
+    }
+
+    // 頁面上的「Aa」按鈕與設定面板（介面與 iPhone 版一致）。
+    // 放在頁面上而非 Tampermonkey 選單：選單要點開擴充功能圖示好幾層，閱讀中調字級太不方便。
+    // 獨立一個宿主，不寄生在頁碼按鈕裡：頁碼按鈕要翻過頁才出現，而且可以在選單關掉。
+    let readingBtnEl = null, readingPanelEl = null, readingPanelOpen = false;
+
+    function readingPanelHtml() {
+        let sw = '';
+        READING_THEME_ORDER.forEach(function(k) {
+            sw += '<button class="rsSw" data-theme="' + k + '" title="' + READING_THEMES[k].name + '" aria-label="' + READING_THEMES[k].name +
+                  '" style="background:' + READING_THEMES[k].bg + '"></button>';
+        });
+        return '<div class="row">' +
+                   '<button class="fbtn" data-act="down" title="字級縮小">A−</button>' +
+                   '<span id="rsSize"></span>' +
+                   '<button class="fbtn" data-act="up" title="字級放大">A+</button>' +
+               '</div>' +
+               '<div class="row">' + sw + '</div>' +
+               '<div class="row"><button id="rsToggle" data-act="toggle"></button></div>';
+    }
+
+    function createReadingPanel() {
+        if (getCSS('#Autopage_reading')) return;
+        const host = document.createElement('div');
+        host.id = 'Autopage_reading';
+        host.style.cssText = 'display:flex!important;position:fixed!important;z-index:9999998!important';
+        document.documentElement.appendChild(host);
+        const shadow = host.attachShadow({ mode: 'open' }); // Shadow DOM 避免網頁樣式影響
+        // #rs 外觀比照頁碼按鈕（#Autopage_number_button），位置在它正下方
+        shadow.innerHTML = '<style>' +
+            '#rs{top:calc(75vh + 52px);left:0;width:32px;height:32px;padding:6px;display:flex;position:fixed;opacity:0.3;transition:.2s;z-index:9999998;' +
+                'cursor:pointer;user-select:none;align-items:center;justify-content:center;box-sizing:content-box;border-radius:0 50% 50% 0;' +
+                'transform:translateX(-8px);background-color:#eee;box-shadow:1px 1px 3px 0px #aaa;color:#000;font-size:15px;font-family:system-ui;}' +
+            '#rs:hover,#rs.open{opacity:0.8;transform:translateX(0);}' +
+            '#rsPanel{display:none;position:fixed;left:48px;top:calc(75vh - 30px);z-index:9999998;width:208px;box-sizing:border-box;padding:10px;' +
+                'border-radius:12px;background:rgba(20,20,20,.92);color:#fff;font:14px/1.5 system-ui;box-shadow:0 2px 8px rgba(0,0,0,.35);}' +
+            '#rsPanel .row{display:flex;align-items:center;justify-content:space-between;margin:8px 0;}' +
+            '#rsPanel button{font:inherit;color:#fff;background:#3a3a3a;border:0;border-radius:8px;height:36px;padding:0 10px;cursor:pointer;}' +
+            '#rsPanel button:hover{background:#505050;}' +
+            '#rsPanel .fbtn{width:56px;}' +
+            '#rsPanel #rsSize{flex:1;text-align:center;font-size:16px;font-variant-numeric:tabular-nums;}' +
+            '#rsPanel .rsSw{width:36px;height:36px;padding:0;border-radius:50%;border:1px solid #777;}' +
+            '#rsPanel #rsToggle{width:100%;}' +
+            '</style>' +
+            '<div id="rs" role="button" title="閱讀樣式（字級、背景）">Aa</div>' +
+            '<div id="rsPanel" role="dialog" aria-label="閱讀樣式設定">' + readingPanelHtml() + '</div>';
+        readingBtnEl = shadow.querySelector('#rs');
+        readingPanelEl = shadow.querySelector('#rsPanel');
+        renderReadingPanel();
+
+        readingBtnEl.addEventListener('click', function(e) {
+            e.preventDefault(); e.stopPropagation();
+            setReadingPanelOpen(!readingPanelOpen);
+        });
+        readingPanelEl.addEventListener('click', function(e) {
+            e.preventDefault(); e.stopPropagation();
+            const b = e.target && e.target.closest ? e.target.closest('button') : null;
+            if (!b) return;
+            const act = b.getAttribute('data-act'), th = b.getAttribute('data-theme');
+            if (act === 'down') readingFontSize = Math.max(READING_FONT_MIN, readingFontSize - READING_FONT_STEP);
+            else if (act === 'up') readingFontSize = Math.min(READING_FONT_MAX, readingFontSize + READING_FONT_STEP);
+            else if (act === 'toggle') readingStyleOn = !readingStyleOn;
+            else if (th && READING_THEMES[th]) readingTheme = th;
+            else return;
+            readingChanged();
+        });
+        // 點面板外就收起。用 capture 階段：正文的 click 若已被別處 stopPropagation，冒泡階段就看不到了
+        document.addEventListener('click', function(e) {
+            if (!readingPanelOpen) return;
+            const path = (e.composedPath && e.composedPath()) || [];
+            if (path.indexOf(readingPanelEl) !== -1 || path.indexOf(readingBtnEl) !== -1) return;
+            setReadingPanelOpen(false);
+        }, true);
+    }
+
+    // SPA 導航到非小說站時移除，回到小說站時重建
+    function removeReadingPanel() {
+        const host = getCSS('#Autopage_reading');
+        if (host) host.remove();
+        readingBtnEl = readingPanelEl = null;
+        readingPanelOpen = false;
+    }
+
+    function setReadingPanelOpen(open) {
+        readingPanelOpen = !!open;
+        if (readingPanelEl) readingPanelEl.style.display = readingPanelOpen ? 'block' : 'none';
+        if (readingBtnEl) readingBtnEl.classList.toggle('open', readingPanelOpen);
+    }
+
+    // 面板的字級、主題外框與切換鈕文字隨設定即時更新；閱讀樣式關閉時 Aa 變灰
+    function renderReadingPanel() {
+        if (readingBtnEl) readingBtnEl.style.color = readingStyleOn ? '' : '#888';
+        if (!readingPanelEl) return;
+        readingPanelEl.querySelector('#rsSize').textContent = readingFontSize;
+        readingPanelEl.querySelectorAll('.rsSw').forEach(function(sw) {
+            const cur = sw.getAttribute('data-theme') === readingTheme;
+            sw.style.outline = cur ? '2px solid #FF9800' : '';
+            sw.style.outlineOffset = cur ? '2px' : '';
+        });
+        readingPanelEl.querySelector('#rsToggle').textContent = readingStyleOn ? '改用原網站' : '套用閱讀樣式';
     }
 
     function registerMenuCommand() {
@@ -2419,26 +2520,7 @@
             GM_setValue('menu_autoScrollSpeed', asSpeed);
             registerMenuCommand();
         }));
-
-        // 6. 閱讀樣式（只在小說站命中時顯示；每個動作即時套用、存檔，再重建選單更新標籤）
-        if (readingStyleEligible()) {
-            menuId.push(GM_registerMenuCommand('🅰 閱讀樣式：' + (readingStyleOn ? '開' : '關（使用原網站）'), function() {
-                readingStyleOn = !readingStyleOn;
-                readingChanged();
-            }));
-            menuId.push(GM_registerMenuCommand('🔠 字級 +2（目前 ' + readingFontSize + 'px）', function() {
-                readingFontSize = Math.min(READING_FONT_MAX, readingFontSize + READING_FONT_STEP);
-                readingChanged();
-            }));
-            menuId.push(GM_registerMenuCommand('🔡 字級 −2', function() {
-                readingFontSize = Math.max(READING_FONT_MIN, readingFontSize - READING_FONT_STEP);
-                readingChanged();
-            }));
-            menuId.push(GM_registerMenuCommand('🎨 背景：' + READING_THEMES[readingTheme].name + '（點擊換下一個）', function() {
-                readingTheme = READING_THEME_ORDER[(READING_THEME_ORDER.indexOf(readingTheme) + 1) % READING_THEME_ORDER.length];
-                readingChanged();
-            }));
-        }
+        // 閱讀樣式的設定在頁面上的「Aa」面板（createReadingPanel），不放選單
     }
 
     function menu_switch(status, name) {
@@ -2621,9 +2703,10 @@
                 try { cleanContent(getAll(curSite.pager.pageE), curSite.cleanOpts); } catch (e) {}
             }
         }
-        // 閱讀樣式：先讀設定（選單標籤要用），再套用。每次初始化都重做，SPA 導航後換到非小說站時會清掉殘留樣式
+        // 閱讀樣式：先讀設定再套用。每次初始化都重做，SPA 導航後換到非小說站時會清掉殘留樣式與 Aa 面板
         loadReadingCfg();
         applyReadingStyle();
+        if (readingStyleEligible()) createReadingPanel(); else removeReadingPanel();
         // 自動捲頁只需初始化一次（SPA 導航會重進 initSite，不可重複掛監聽）；
         // 必須早於 registerMenuCommand()，否則菜單標籤會顯示預設值而非已存速度
         if (!asInstalled) {
