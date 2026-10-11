@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.3.24
+// @version      1.3.25
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -37,6 +37,8 @@
 // @match        *://*.ttks.tw/*
 // @match        *://twkan.com/*
 // @match        *://*.twkan.com/*
+// @match        *://novels.com.tw/*
+// @match        *://*.novels.com.tw/*
 // @noframes
 // ==/UserScript==
 
@@ -220,6 +222,40 @@
             });
         });
         return elements;
+    }
+
+    // novels.com.tw 正文以 AES-CBC 加密放在 <script>window.encryptedContent = "..."</script>，
+    // 由站方 gfncgd.js 在 DOMContentLoaded 時解密；XHR 取回的頁面不會執行 script，只拿得到密文。
+    // 金鑰寫死在該 js 的字串表內（跨書通用），IV 全零。WebCrypto 只有非同步 API，而 beforePage 是
+    // 同步呼叫，所以先把 <article> 換成佔位文字讓插入照常進行，解密完成後再填回同一個節點。
+    // 必須填 <article> 而非內層 #chapter-content：清空的 div 會被 cleanContent 當成空元素移除。
+    var NOVELS_TW_KEY = 'WZc0cbzgY3lhz3X6';
+    function novelsTwDecrypt(pageE) {
+        pageE.forEach(function(el) {
+            if (el.id !== 'article') return;
+            var src = getAllCSS('script', el).map(function(s) { return s.textContent; })
+                .filter(function(t) { return t.indexOf('encryptedContent') > -1; })[0];
+            var m = src && src.match(/encryptedContent\s*=\s*("(?:[^"\\]|\\.)*")/);
+            if (!m) return;
+            var b64 = JSON.parse(m[1]);
+            el.innerHTML = '<p>（MyAutoPager：正文解密中…）</p>';
+            var raw = Uint8Array.from(atob(b64), function(c) { return c.charCodeAt(0); });
+            crypto.subtle.importKey('raw', new TextEncoder().encode(NOVELS_TW_KEY), {name: 'AES-CBC'}, false, ['decrypt'])
+                .then(function(key) { return crypto.subtle.decrypt({name: 'AES-CBC', iv: new Uint8Array(16)}, key, raw); })
+                .then(function(buf) {
+                    var html = new TextDecoder().decode(buf);
+                    // 明文通常已是 <p> 段落；舊格式是純文字換行，比照站方逐行包 <p>
+                    if (html.indexOf('<p') === -1) {
+                        html = html.split('\n').map(function(l) { return l.trim() ? '<p>' + l + '</p>' : '<p><br></p>'; }).join('');
+                    }
+                    el.innerHTML = html;
+                })
+                .catch(function(e) {
+                    console.error('[MyAutoPager] novels.com.tw 正文解密失敗（站方可能已換金鑰）', e);
+                    el.innerHTML = '<p>（MyAutoPager：正文解密失敗，站方可能已更換金鑰，請重新整理此頁閱讀）</p>';
+                });
+        });
+        return pageE;
     }
 
     // 第三層：攔截 document 級別的點擊劫持
@@ -493,6 +529,30 @@
                 scrollD: 2000
             }
             // 正文是純文字節點 + <br>，不是 <p>，不會被推廣關鍵字規則掃到，故不需 cleanOpts
+        },
+        novelstw: {
+            // 繁體小說（novels.com.tw）：一章拆成多頁（206331926.html → _2.html → _3.html），
+            // 正文加密下發，見 novelsTwDecrypt()
+            host: 'novels.com.tw',
+            url: /^\/novels\/[^\/]+\/\d+(_\d+)?\.html/,
+            // 首頁正文中夾的廣告版位（插入的頁面由 cleanContent 清掉）
+            style: '#article ins, #article iframe, #article [id^="div-gpt-ad"], #article [id^="div-tam-ad"], #mys-wrapper {display:none!important}',
+            pager: {
+                // 末章末頁的「沒有了」指回書頁（/ 結尾），[href$=".html"] 排除之 → nextL 落空即乾淨停止
+                nextL: 'a#next_url[href$=".html"]',
+                // .text_title 含 h1（「第N章 …（2 / 3）」）與書名作者資訊列，#article 是正文
+                pageE: '.section_style > .text_title, #article',
+                replaceE: '.read_nav',
+                scrollD: 2000
+            },
+            // 正文一句一個 <p>，keepText 防推廣關鍵字誤刪
+            cleanOpts: { keepText: '#article' },
+            beforePage: function(pageE) {
+                // 書名／作者／字數資訊列每頁都有，只留首頁那份
+                pageE.forEach(function(el) { getAllCSS('.text_info', el).forEach(function(n) { n.remove(); }); });
+                // beforePage 在 cleanContent 之前執行，裝著密文的 <script> 此時還在
+                novelsTwDecrypt(pageE);
+            }
         }
         // thepaperbooks（8book 系小說站）：真實內文由站方混淆 script 在瀏覽器
         // 渲染（伺服器對非瀏覽器請求偽裝成關鍵字農場頁），需要 iframe 擷取
