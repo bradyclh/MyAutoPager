@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.4.2
+// @version      1.4.3
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -327,6 +327,16 @@
     var AD_CLASS_RE = /\b(gadBlock|clickforce|cfad|ad[-_]?wrap)/i;
     var INLINE_EVENT_ATTRS = ['onclick', 'onmousedown', 'onmouseup', 'ontouchstart', 'ontouchend', 'onpointerdown', 'onauxclick', 'onsubmit', 'oncontextmenu'];
 
+    // 站方閱讀設定控制項的判斷字樣（見 apIsSiteUiControl）
+    // 函式名稱：字級、夜間、配色、書架等設定類動作
+    var SITE_UI_FN_RE = /(size|font|zoom|night|dark|day|light|theme|skin|color|colour|bg|background|mode|cog|setting|config|style|width|line|spacing|bookmark|shelf)/i;
+    // 按鈕語境（class／id／title／文字）：空的 javascript: 只能靠這個判斷
+    var SITE_UI_CTX_RE = /(set|cog|control|tool|font|size|theme|skin|night|dark|day|color|bg|read[-_]?set|reader|字|夜|日間|白天|背景|主題|護眼|設定|設置|字號|字体|字體)/i;
+    // 廣告特徵：補 AD_CLASS_RE 沒涵蓋的常見命名
+    var SITE_UI_AD_RE = /\b(ad|ads|advert|banner|sponsor|promo|gpt|taboola|clickforce|onead)\b|(^|[^a-z])ad[-_]/i;
+    // 程式碼含這些字樣就代表會導向或開新頁，一律不放行
+    var SITE_UI_BAD_RE = /open|location|href|window\.|document\.|eval|http/i;
+
     // 判斷 URL 是否為跨域（相對基礎域名；假設兩段式 TLD，對當前支援站點有效）
     function getBaseDomain() {
         var parts = location.hostname.split('.');
@@ -364,6 +374,72 @@
         });
     }
 
+    // ---- 站方閱讀設定控制項的放行判斷（apDefuseAnchor 與點擊守衛共用） ----
+    // 站方常把字級、夜間模式寫成 <a href="javascript:isnight();">，整頁一律拆彈會把
+    // 它們一起弄壞。這裡只放行「長得就是設定按鈕」的錨點，而且判斷從嚴：任何一條不確定
+    // 就照擋。放行的只是站方自己的 handler；window.open 鎖與 iframe 守衛完全不動，
+    // 所以放行的程式碼即使想偷開分頁，也會被頁面世界的 window.open 鎖擋下。
+
+    // 從錨點往上走（含自己），最多 maxDepth 層，到 body 為止；任一節點的指定屬性命中 re 就回傳 true
+    function apChainMatches(a, maxDepth, re, attrs) {
+        for (var n = a, d = 0; n && d <= maxDepth && n !== document.body && n !== document.documentElement; n = n.parentElement, d++) {
+            for (var i = 0; i < attrs.length; i++) {
+                if (re.test(n.getAttribute(attrs[i]) || '')) return true;
+            }
+        }
+        return false;
+    }
+
+    // 條件 1：錨點不在正文範圍內。curSite 還沒決定（document-start）時正文範圍未知，
+    // 依規格視為範圍外；規則有 curSite 卻讀不出正文範圍，則從嚴視為在正文內
+    function apOutsideContent(a) {
+        if (!curSite) return true;
+        try {
+            if (!curSite.pager || !curSite.pager.pageE) return false;
+            var els = getAll(curSite.pager.pageE);
+            for (var i = 0; i < els.length; i++) {
+                if (els[i].contains(a)) return false;
+            }
+            return true;
+        } catch (e) { return false; }
+    }
+
+    // 條件 3b 的語境：錨點本身或祖先（最多 4 層）的標記，或錨點的文字
+    function apCtxMarked(a) {
+        if (apChainMatches(a, 4, SITE_UI_CTX_RE, ['class', 'id', 'title', 'aria-label'])) return true;
+        // 文字只看短標籤：長文字多半是包住大段內容的容器，裡面隨便一個「夜」「字」就會誤中
+        var txt = (a.textContent || '').replace(/\s+/g, '');
+        return txt.length > 0 && txt.length <= 20 && SITE_UI_CTX_RE.test(txt);
+    }
+
+    function apIsSiteUiControl(a) {
+        try {
+            if (!a || a.nodeType !== 1) return false;
+            // 條件 1：不在正文範圍（正文裡的 javascript: 一律照擋）
+            if (!apOutsideContent(a)) return false;
+            // 條件 2：錨點與祖先（最多 6 層）都沒有廣告特徵
+            if (apChainMatches(a, 6, AD_CLASS_RE, ['class', 'id']) ||
+                apChainMatches(a, 6, SITE_UI_AD_RE, ['class', 'id'])) return false;
+            // 額外條件：target=_blank 會開新分頁，那條路 window.open 鎖管不到，不放行
+            var tgt = a.getAttribute('target');
+            if (tgt === '_blank' || tgt === '_new') return false;
+
+            // 去掉開頭的 javascript:、結尾的分號與空白，剩下的才是要判斷的程式碼
+            var code = (a.getAttribute('href') || '')
+                .replace(/^\s*javascript\s*:/i, '').replace(/[\s;]+$/, '').replace(/^\s+/, '');
+
+            // 條件 3a：單純的函式呼叫，函式名稱像設定，程式碼裡沒有開頁／導向的字樣
+            if (/^[A-Za-z_$][\w$.]*\s*\([^()]*\)$/.test(code) &&
+                SITE_UI_FN_RE.test(code.replace(/\s*\(.*$/, '')) &&
+                !SITE_UI_BAD_RE.test(code)) return true;
+
+            // 條件 3b：空的 javascript:（多半只是為了讓 jQuery 綁事件），靠周圍的設定語彙判斷
+            var lower = code.toLowerCase();
+            if ((lower === '' || lower === 'void(0)' || lower === 'void 0') && apCtxMarked(a)) return true;
+            return false;
+        } catch (e) { return false; }
+    }
+
     // 第二層之二：整頁（非只有正文）的輕量拆彈，給觀察器與初始掃描共用。
     // 比 stripPopupTriggers 保守：只拔 inline 事件、只中和 javascript: 與
     // 跨域 _blank 錨點，不動一般跨域連結 —— 整頁套用 stripPopupTriggers 會
@@ -373,6 +449,12 @@
         var isJs = raw.toLowerCase().replace(/\s/g, '').indexOf('javascript:') === 0;
         var tgt = a.getAttribute('target');
         if (isJs) {
+            // 站方設定控制項保留 href：拆掉之後字級、夜間按鈕就完全失效
+            // 注意這裡可能在 curSite 決定之前（document-start）就被呼叫，apIsSiteUiControl 已處理
+            if (apIsSiteUiControl(a)) {
+                console.info('[MyAutoPager] 放行站方設定控制項:', raw);
+                return;
+            }
             a.setAttribute('data-blocked-href', raw);
             a.removeAttribute('href');
             a.removeAttribute('target');
@@ -397,7 +479,8 @@
     // 看起來就是廣告的容器 —— 開新分頁的載體實際上就是這些。
     // 正文範圍本來就由 cleanContent → stripPopupTriggers 全部拔掉，不重複處理。
     function apShouldStripInline(n) {
-        if (n.tagName === 'A') return true;
+        // 放行的站方設定錨點連 inline onclick 一起保留，否則 href 留著、handler 卻沒了，按鈕照樣失效
+        if (n.tagName === 'A') return !apIsSiteUiControl(n);
         var cls = n.className;
         if (cls && typeof cls !== 'string' && cls.baseVal !== undefined) cls = cls.baseVal;
         if (typeof cls === 'string' && AD_CLASS_RE.test(cls)) return true;
@@ -561,6 +644,11 @@
             if (anchor) {
                 var rawHref = anchor.getAttribute('href') || '';
                 if (rawHref.toLowerCase().replace(/\s/g, '').indexOf('javascript:') === 0) {
+                    // 站方設定控制項放行：不攔截，讓站方的 handler 跑（window.open 鎖仍在）
+                    if (apIsSiteUiControl(anchor)) {
+                        console.info('[MyAutoPager] 放行站方設定控制項:', rawHref);
+                        return;
+                    }
                     console.warn('[MyAutoPager] 攔截 javascript: 連結');
                     e.stopPropagation(); e.preventDefault();
                     apReportBlocked('javascript:');
@@ -1076,6 +1164,8 @@
 
             noNextNotified = false;
             if (curSite.afterPage) curSite.afterPage();
+            // 新頁插入後補標背景祖先（CSS 本來就涵蓋新節點，這裡主要是重新標記）
+            applyReadingStyle();
         } else {
             // 取到回應卻插不進去。最常見原因是伺服器對 XHR 回的不是真正的
             // 章節頁（例如先回一段 JS 轉向殼層），於是 pageE 抓不到任何元素。
@@ -1102,8 +1192,9 @@
         var shadow = host.attachShadow({ mode: 'open' });
         shadow.innerHTML =
             '<style>' +
-            '#btn{' +
-                'top:calc(80vh);left:0;' +
+            // #btn 與 #rs 共用外觀，只差垂直位置
+            '#btn,#rs{' +
+                'left:0;' +
                 'width:36px;height:36px;padding:8px;' +
                 'display:flex;position:fixed;' +
                 'opacity:0.4;transition:.2s;z-index:9999998;' +
@@ -1117,9 +1208,28 @@
                 'color:#000;font-size:16px;font-family:system-ui;' +
                 'touch-action:manipulation;' +
             '}' +
-            '#btn:active{opacity:0.9;transform:translateX(0)}' +
+            '#btn{top:calc(80vh)}' +
+            // 垂直間距取 56px 而非規格的 48px：#btn 實高 52px（36 + padding 8×2，content-box），
+            // 48px 會和它重疊 4px
+            '#rs{top:calc(80vh + 56px)}' +
+            '#btn:active,#rs:active{opacity:0.9;transform:translateX(0)}' +
+            // 閱讀樣式面板：貼在 Aa 按鈕右側，預設收起
+            '#rsPanel{display:none;position:fixed;left:48px;top:calc(80vh - 40px);z-index:9999998;' +
+                'width:208px;box-sizing:border-box;padding:10px;border-radius:12px;' +
+                'background:rgba(20,20,20,.92);color:#fff;font:14px/1.5 system-ui;' +
+                'box-shadow:0 2px 8px rgba(0,0,0,.35);-webkit-tap-highlight-color:transparent}' +
+            '#rsPanel .row{display:flex;align-items:center;justify-content:space-between;margin:8px 0}' +
+            '#rsPanel button{font:inherit;color:#fff;background:#3a3a3a;border:0;border-radius:8px;' +
+                'height:36px;padding:0 10px;cursor:pointer;touch-action:manipulation;' +
+                '-webkit-tap-highlight-color:transparent}' +
+            '#rsPanel .fbtn{width:56px}' +
+            '#rsPanel #rsSize{flex:1;text-align:center;font-size:16px;font-variant-numeric:tabular-nums}' +
+            '#rsPanel .rsSw{width:36px;height:36px;padding:0;border-radius:50%;border:1px solid #777}' +
+            '#rsPanel #rsToggle{width:100%}' +
             '</style>' +
-            '<div id="btn" role="button" aria-label="頁碼/暫停翻頁">1</div>';
+            '<div id="btn" role="button" aria-label="頁碼/暫停翻頁">1</div>' +
+            '<div id="rs" role="button" aria-label="閱讀樣式">Aa</div>' +
+            '<div id="rsPanel" role="dialog" aria-label="閱讀樣式設定">' + rsPanelHtml() + '</div>';
 
         pageNumBtn = shadow.querySelector('#btn');
 
@@ -1165,6 +1275,39 @@
                 swipeY = y;
             }
         });
+
+        // 閱讀樣式：Aa 按鈕與面板。click／touch 全部在 shadow root 內攔下，不讓它們落到
+        // 雙擊手勢（asInstallPageTap）與正文點擊的路徑上：點 Aa 不能啟動自動捲頁，
+        // 也不該被當成一次正文點擊
+        rsBtnEl = shadow.querySelector('#rs');
+        rsPanelEl = shadow.querySelector('#rsPanel');
+        rsRenderPanel();
+        rsBtnEl.addEventListener('click', function(e) {
+            e.preventDefault(); e.stopPropagation();
+            rsSetPanelOpen(!rsPanelOpen);
+        });
+        rsPanelEl.addEventListener('click', function(e) {
+            e.preventDefault(); e.stopPropagation();
+            var b = e.target && e.target.closest ? e.target.closest('button') : null;
+            if (!b) return;
+            var act = b.getAttribute('data-act'), th = b.getAttribute('data-theme');
+            if (act === 'down') rsSetFont(-READING_FS_STEP);
+            else if (act === 'up') rsSetFont(READING_FS_STEP);
+            else if (act === 'toggle') rsSetOn(!rsOn);
+            else if (th) rsSetTheme(th);
+        });
+        ['touchstart', 'touchend'].forEach(function(n) {
+            rsBtnEl.addEventListener(n, function(e) { e.stopPropagation(); });
+            rsPanelEl.addEventListener(n, function(e) { e.stopPropagation(); });
+        });
+        // 點面板外（含頁碼鈕與正文）就收起。用 capture 階段：正文的 click 若已被別處
+        // stopPropagation，冒泡階段就看不到了
+        document.addEventListener('click', function(e) {
+            if (!rsPanelOpen) return;
+            var path = (e.composedPath && e.composedPath()) || [];
+            if (path.indexOf(rsPanelEl) !== -1 || path.indexOf(rsBtnEl) !== -1) return;
+            rsSetPanelOpen(false);
+        }, true);
     }
 
     function updatePageNumber() {
@@ -1414,6 +1557,173 @@
         }, 1000);
     }
 
+    // ========== 閱讀樣式（Part B，預設開啟） ==========
+    // 只在命中規則時啟用（curSite 非 null）。站方正文常帶 inline color／font-size，
+    // 一般樣式表蓋不過，所以這裡的規則一律 !important（!important 的樣式表規則會
+    // 贏過非 important 的 inline style）。主題表與桌面版完全相同，改色請兩邊一起改。
+    var READING_THEMES = {
+        paper: { name: '米黃', bg: '#f6f1e3', fg: '#2b2b2b' },
+        white: { name: '純白', bg: '#ffffff', fg: '#222222' },
+        green: { name: '護眼綠', bg: '#cce8cf', fg: '#1f2d1f' },
+        night: { name: '夜間', bg: '#1e1e1e', fg: '#c8c8c8' }
+    };
+    var READING_THEME_ORDER = ['paper', 'white', 'green', 'night'];
+    var READING_FS_MIN = 14, READING_FS_MAX = 32, READING_FS_STEP = 2, READING_FS_DEFAULT = 20;
+    // 行高固定，不提供 UI、也不存設定
+    var READING_LINE_HEIGHT = 1.8;
+    var RS_KEY_ON = 'readingStyleOn', RS_KEY_FS = 'readingFontSize', RS_KEY_THEME = 'readingTheme';
+
+    var rsOn = true, rsFontSize = READING_FS_DEFAULT, rsTheme = 'paper';
+    // 使用者在儲存值讀回來之前已經改過的欄位：讀取完成時不覆蓋它
+    var rsTouched = {};
+    var rsBtnEl = null, rsPanelEl = null, rsPanelOpen = false;
+
+    function rsClampFont(v) {
+        v = parseInt(v, 10);
+        if (isNaN(v)) return READING_FS_DEFAULT;
+        return v < READING_FS_MIN ? READING_FS_MIN : (v > READING_FS_MAX ? READING_FS_MAX : v);
+    }
+
+    function rsValidTheme(name) {
+        return (typeof name === 'string' && Object.prototype.hasOwnProperty.call(READING_THEMES, name)) ? name : 'paper';
+    }
+
+    // 比照 asLoadSpeed／asSaveSpeed 的 GM.getValue／GM.setValue Promise 寫法。
+    // 讀取完成前已用預設值套過，這裡讀到值後再套一次，頁面不必等 storage。
+    function rsLoadSettings() {
+        try {
+            return Promise.all([
+                GM.getValue(RS_KEY_ON, true),
+                GM.getValue(RS_KEY_FS, READING_FS_DEFAULT),
+                GM.getValue(RS_KEY_THEME, 'paper')
+            ]).then(function(v) {
+                if (!rsTouched.on) rsOn = v[0] !== false;
+                if (!rsTouched.fs) rsFontSize = rsClampFont(v[1]);
+                if (!rsTouched.theme) rsTheme = rsValidTheme(v[2]);
+                applyReadingStyle();
+                rsRenderPanel();
+            }).catch(function() {});
+        } catch (e) { return Promise.resolve(); }
+    }
+
+    // 每個欄位各自寫入，不整組覆寫：若讀取還沒完成，整組寫回會把別的欄位洗回預設值
+    function rsSave(key, value) {
+        try { Promise.resolve(GM.setValue(key, value)).catch(function() {}); } catch (e) {}
+    }
+
+    // 套用閱讀樣式。同一個 <style id="ap-reading-style"> 反覆更新，不重複插入。
+    // 翻頁後正文節點會換新，所以每次都重新標記背景，並先清掉舊標記，免得殘留的祖先被誤染色。
+    function applyReadingStyle() {
+        try {
+            var t = READING_THEMES[rsTheme] || READING_THEMES.paper;
+            var on = !!(rsOn && curSite);
+            var sel = (on && curSite.pager && typeof curSite.pager.pageE === 'string') ? curSite.pager.pageE : '';
+            var css = '';
+            getAllCSS('[data-ap-bg]').forEach(function(n) { n.removeAttribute('data-ap-bg'); });
+            if (on) {
+                // XPath 規則（以 / 或 ( 開頭）寫不出可靠的 CSS 選擇器，只套背景
+                // :is() 包住整串選擇器（與桌面版一致）：不必自己切逗號，選擇器內的
+                // :not(:has(a, b)) 不會被切壞；:is() 是容錯清單，其中一段寫壞也不會整條失效
+                var sels = (!sel.trim() || /^[\/(]/.test(sel.trim())) ? [] : [':is(' + sel.trim() + ')'];
+                css += 'html, body { background: ' + t.bg + ' !important; }\n' +
+                       '[data-ap-bg] { background: ' + t.bg + ' !important; }\n';
+                sels.forEach(function(s) {
+                    css += s + ', ' + s + ' * { color: ' + t.fg + ' !important; font-size: ' + rsFontSize +
+                           'px !important; line-height: ' + READING_LINE_HEIGHT +
+                           ' !important; background-color: transparent !important; }\n' +
+                           s + ' :is(h1,h2,h3), ' + s + ':is(h1,h2,h3) { font-size: ' +
+                           Math.round(rsFontSize * 1.3) + 'px !important; }\n';
+                });
+                // 正文元素本身改成透明，底色改由它的祖先（標成 data-ap-bg）畫出來
+                try {
+                    var first = sel ? getAll(sel)[0] : null;
+                    for (var n = first ? first.parentElement : null;
+                         n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+                        n.setAttribute('data-ap-bg', '1');
+                    }
+                } catch (e) {}
+            }
+            var el = document.getElementById('ap-reading-style');
+            if (!el) {
+                el = document.createElement('style');
+                el.id = 'ap-reading-style';
+                (document.head || document.documentElement).appendChild(el);
+            }
+            el.textContent = css;
+        } catch (e) {}
+    }
+
+    // 面板的字級、主題外框與切換鈕文字隨設定即時更新（面板還沒建立時只更新 Aa 按鈕的狀態）
+    function rsRenderPanel() {
+        if (rsBtnEl) rsBtnEl.style.color = rsOn ? '' : '#888';
+        if (!rsPanelEl) return;
+        var size = rsPanelEl.querySelector('#rsSize');
+        if (size) size.textContent = rsFontSize;
+        var sws = rsPanelEl.querySelectorAll('.rsSw');
+        for (var i = 0; i < sws.length; i++) {
+            var cur = sws[i].getAttribute('data-theme') === rsTheme;
+            sws[i].style.outline = cur ? '2px solid #FF9800' : '';
+            sws[i].style.outlineOffset = cur ? '2px' : '';
+        }
+        var tg = rsPanelEl.querySelector('#rsToggle');
+        if (tg) tg.textContent = rsOn ? '改用原網站' : '套用閱讀樣式';
+    }
+
+    function rsSetPanelOpen(open) {
+        rsPanelOpen = !!open;
+        if (rsPanelEl) rsPanelEl.style.display = rsPanelOpen ? 'block' : 'none';
+    }
+
+    // 所有設定變動的共同出口：套用並更新面板；存檔由各自的 rsSetXxx 負責（只存該欄位）
+    function rsChanged(field) {
+        rsTouched[field] = true;
+        applyReadingStyle();
+        rsRenderPanel();
+    }
+
+    function rsSetFont(delta) {
+        var v = rsClampFont(rsFontSize + delta);
+        if (v === rsFontSize) return;
+        rsFontSize = v;
+        rsSave(RS_KEY_FS, v);
+        rsChanged('fs');
+    }
+
+    function rsSetTheme(name) {
+        if (name === rsTheme || !Object.prototype.hasOwnProperty.call(READING_THEMES, name)) return;
+        rsTheme = name;
+        rsSave(RS_KEY_THEME, name);
+        rsChanged('theme');
+    }
+
+    function rsSetOn(on) {
+        rsOn = !!on;
+        rsSave(RS_KEY_ON, rsOn);
+        rsChanged('on');
+    }
+
+    // 面板內容：A− ／字級 ／ A+、四個主題色塊、原網站切換鈕。樣式寫在 createPageNumber 的 <style>
+    function rsPanelHtml() {
+        var sw = '';
+        READING_THEME_ORDER.forEach(function(k) {
+            sw += '<button class="rsSw" data-theme="' + k + '" aria-label="' + READING_THEMES[k].name +
+                  '" style="background:' + READING_THEMES[k].bg + '"></button>';
+        });
+        return '<div class="row">' +
+                   '<button class="fbtn" data-act="down" aria-label="字級縮小">A−</button>' +
+                   '<span id="rsSize"></span>' +
+                   '<button class="fbtn" data-act="up" aria-label="字級放大">A+</button>' +
+               '</div>' +
+               '<div class="row">' + sw + '</div>' +
+               '<div class="row"><button id="rsToggle" data-act="toggle"></button></div>';
+    }
+
+    // 規則命中、DOM 就緒時呼叫：先用預設值套上，讀回儲存值後再套一次
+    function rsInit() {
+        applyReadingStyle();
+        rsLoadSettings();
+    }
+
     // ========== 初始化 ==========
 
     matchRule();
@@ -1469,6 +1779,10 @@
         // 頁碼按鈕最先建立：它是使用者在 iPhone 上判斷「腳本到底有沒有在跑」的
         // 唯一可見標記，後面任何一步出錯都不該讓它跟著消失。
         try { createPageNumber(); } catch (e) {}
+
+        // 閱讀樣式：先用預設值套上，儲存值讀回後再套一次。放在停用檢查之後 ——
+        // 停用本站時不建立 Aa 按鈕，若仍套樣式，使用者就沒有任何 UI 能關掉它
+        try { rsInit(); } catch (e) {}
 
         // 啟用確認：iPhone 沒有 console，這行是使用者唯一能確認
         // 「腳本有在跑、跑的是哪一版、命中哪條規則」的方式
