@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.26
+// @version      1.2.27
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -2309,7 +2309,20 @@
         night: { name: '夜間', bg: '#1e1e1e', fg: '#c8c8c8' }
     };
     var READING_THEME_ORDER = ['paper', 'white', 'green', 'night'];
-    var readingStyleOn = true, readingFontSize = READING_FONT_DEFAULT, readingTheme = 'paper';
+    // readingFontAuto：字級依視窗寬度自動決定（預設）；按過 A−／A+ 就改用手動的 readingFontSize
+    var readingStyleOn = true, readingFontSize = READING_FONT_DEFAULT, readingFontAuto = true, readingTheme = 'paper';
+
+    // 自動字級：同一個字級在手機上太大、在大螢幕上又太小，所以依視窗寬度分三段。
+    // 斷點與 iPhone 版相同
+    function autoReadingFontSize() {
+        const w = window.innerWidth || document.documentElement.clientWidth || 1024;
+        return w < 480 ? 18 : (w < 1600 ? 20 : 22);
+    }
+
+    // 實際套用的字級
+    function effectiveReadingFontSize() {
+        return readingFontAuto ? autoReadingFontSize() : readingFontSize;
+    }
 
     // 命中小說站規則才可用（與 popupBlockEnabled 同一判準，但不依賴 initSite 的執行順序）
     function readingStyleEligible() {
@@ -2319,6 +2332,7 @@
     // 讀取設定；值不合法時退回預設，避免 GM 儲存被改壞後整頁樣式失效
     function loadReadingCfg() {
         readingStyleOn = GM_getValue('menu_readingStyleOn', true) !== false;
+        readingFontAuto = GM_getValue('menu_readingFontAuto', true) !== false;
         const fs = parseInt(GM_getValue('menu_readingFontSize', READING_FONT_DEFAULT), 10);
         readingFontSize = isNaN(fs) ? READING_FONT_DEFAULT : Math.min(READING_FONT_MAX, Math.max(READING_FONT_MIN, fs));
         const th = GM_getValue('menu_readingTheme', 'paper');
@@ -2328,7 +2342,25 @@
     function saveReadingCfg() {
         GM_setValue('menu_readingStyleOn', readingStyleOn);
         GM_setValue('menu_readingFontSize', readingFontSize);
+        GM_setValue('menu_readingFontAuto', readingFontAuto);
         GM_setValue('menu_readingTheme', readingTheme);
+    }
+
+    // 自動字級模式下，視窗縮放（含旋轉、分割畫面）要跟著換字級；只在跨過斷點時才重套樣式
+    let readingResizeInstalled = false, readingResizeRaf = 0, readingLastAutoSize = 0;
+    function installReadingResize() {
+        if (readingResizeInstalled) return;
+        readingResizeInstalled = true;
+        window.addEventListener('resize', function() {
+            if (readingResizeRaf) return;
+            readingResizeRaf = requestAnimationFrame(function() {
+                readingResizeRaf = 0;
+                if (!readingFontAuto || !readingStyleOn || !readingStyleEligible()) return;
+                if (autoReadingFontSize() === readingLastAutoSize) return;
+                applyReadingStyle();
+                renderReadingPanel();
+            });
+        });
     }
 
     function clearReadingMarks() {
@@ -2355,12 +2387,14 @@
         const textSel = sel && !/^(\/|\(|\.\/|id\()/.test(sel) ? sel : '';
         let css = 'html, body { background: ' + t.bg + ' !important; }\n' +
                   '[data-ap-bg] { background: ' + t.bg + ' !important; }\n';
+        const fs = effectiveReadingFontSize();
+        readingLastAutoSize = autoReadingFontSize();
         if (textSel) {
             // :is() 包住整串選擇器，就不必自己切逗號（選擇器內可能有 :not(:has(a, b)) 之類的逗號）
             const s = ':is(' + textSel + ')';
-            css += s + ', ' + s + ' * { color: ' + t.fg + ' !important; font-size: ' + readingFontSize + 'px !important; line-height: ' + READING_LINE_HEIGHT + ' !important; background-color: transparent !important; }\n';
+            css += s + ', ' + s + ' * { color: ' + t.fg + ' !important; font-size: ' + fs + 'px !important; line-height: ' + READING_LINE_HEIGHT + ' !important; background-color: transparent !important; }\n';
             // 標題放大 1.3 倍。特異性高於上面的 `* {}`，所以不靠規則順序也能蓋過正文字級
-            css += s + ' :is(h1, h2, h3), ' + s + ':is(h1, h2, h3) { font-size: ' + Math.round(readingFontSize * 1.3) + 'px !important; }\n';
+            css += s + ' :is(h1, h2, h3), ' + s + ':is(h1, h2, h3) { font-size: ' + Math.round(fs * 1.3) + 'px !important; }\n';
         }
         styleEl.textContent = css;
 
@@ -2400,7 +2434,8 @@
                    '<button class="fbtn" data-act="up" title="字級放大">A+</button>' +
                '</div>' +
                '<div class="row">' + sw + '</div>' +
-               '<div class="row"><button id="rsToggle" data-act="toggle"></button></div>';
+               '<div class="row"><button id="rsAuto" data-act="auto" title="依視窗寬度自動決定字級">自動</button>' +
+                   '<button id="rsToggle" data-act="toggle"></button></div>';
     }
 
     function createReadingPanel() {
@@ -2424,7 +2459,8 @@
             '#rsPanel .fbtn{width:56px;}' +
             '#rsPanel #rsSize{flex:1;text-align:center;font-size:16px;font-variant-numeric:tabular-nums;}' +
             '#rsPanel .rsSw{width:36px;height:36px;padding:0;border-radius:50%;border:1px solid #777;}' +
-            '#rsPanel #rsToggle{width:100%;}' +
+            '#rsPanel #rsAuto{width:64px;}' +
+            '#rsPanel #rsToggle{flex:1;margin-left:8px;}' +
             '</style>' +
             '<div id="rs" role="button" title="閱讀樣式（字級、背景）">Aa</div>' +
             '<div id="rsPanel" role="dialog" aria-label="閱讀樣式設定">' + readingPanelHtml() + '</div>';
@@ -2441,8 +2477,13 @@
             const b = e.target && e.target.closest ? e.target.closest('button') : null;
             if (!b) return;
             const act = b.getAttribute('data-act'), th = b.getAttribute('data-theme');
-            if (act === 'down') readingFontSize = Math.max(READING_FONT_MIN, readingFontSize - READING_FONT_STEP);
-            else if (act === 'up') readingFontSize = Math.min(READING_FONT_MAX, readingFontSize + READING_FONT_STEP);
+            // A−／A+ 以「目前看到的字級」為起點（自動模式下就是自動值），按下後改為手動
+            if (act === 'down' || act === 'up') {
+                const cur = effectiveReadingFontSize(), d = act === 'up' ? READING_FONT_STEP : -READING_FONT_STEP;
+                readingFontSize = Math.min(READING_FONT_MAX, Math.max(READING_FONT_MIN, cur + d));
+                readingFontAuto = false;
+            }
+            else if (act === 'auto') readingFontAuto = true;
             else if (act === 'toggle') readingStyleOn = !readingStyleOn;
             else if (th && READING_THEMES[th]) readingTheme = th;
             else return;
@@ -2475,7 +2516,10 @@
     function renderReadingPanel() {
         if (readingBtnEl) readingBtnEl.style.color = readingStyleOn ? '' : '#888';
         if (!readingPanelEl) return;
-        readingPanelEl.querySelector('#rsSize').textContent = readingFontSize;
+        readingPanelEl.querySelector('#rsSize').textContent = effectiveReadingFontSize();
+        const autoBtn = readingPanelEl.querySelector('#rsAuto');
+        autoBtn.style.outline = readingFontAuto ? '2px solid #FF9800' : '';
+        autoBtn.style.outlineOffset = readingFontAuto ? '-2px' : '';
         readingPanelEl.querySelectorAll('.rsSw').forEach(function(sw) {
             const cur = sw.getAttribute('data-theme') === readingTheme;
             sw.style.outline = cur ? '2px solid #FF9800' : '';
@@ -2706,7 +2750,7 @@
         // 閱讀樣式：先讀設定再套用。每次初始化都重做，SPA 導航後換到非小說站時會清掉殘留樣式與 Aa 面板
         loadReadingCfg();
         applyReadingStyle();
-        if (readingStyleEligible()) createReadingPanel(); else removeReadingPanel();
+        if (readingStyleEligible()) { createReadingPanel(); installReadingResize(); } else removeReadingPanel();
         // 自動捲頁只需初始化一次（SPA 導航會重進 initSite，不可重複掛監聽）；
         // 必須早於 registerMenuCommand()，否則菜單標籤會顯示預設值而非已存速度
         if (!asInstalled) {

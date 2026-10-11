@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.4.3
+// @version      1.4.4
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -1225,7 +1225,8 @@
             '#rsPanel .fbtn{width:56px}' +
             '#rsPanel #rsSize{flex:1;text-align:center;font-size:16px;font-variant-numeric:tabular-nums}' +
             '#rsPanel .rsSw{width:36px;height:36px;padding:0;border-radius:50%;border:1px solid #777}' +
-            '#rsPanel #rsToggle{width:100%}' +
+            '#rsPanel #rsAuto{width:64px}' +
+            '#rsPanel #rsToggle{flex:1;margin-left:8px}' +
             '</style>' +
             '<div id="btn" role="button" aria-label="頁碼/暫停翻頁">1</div>' +
             '<div id="rs" role="button" aria-label="閱讀樣式">Aa</div>' +
@@ -1293,6 +1294,7 @@
             var act = b.getAttribute('data-act'), th = b.getAttribute('data-theme');
             if (act === 'down') rsSetFont(-READING_FS_STEP);
             else if (act === 'up') rsSetFont(READING_FS_STEP);
+            else if (act === 'auto') rsSetAuto();
             else if (act === 'toggle') rsSetOn(!rsOn);
             else if (th) rsSetTheme(th);
         });
@@ -1571,9 +1573,23 @@
     var READING_FS_MIN = 14, READING_FS_MAX = 32, READING_FS_STEP = 2, READING_FS_DEFAULT = 20;
     // 行高固定，不提供 UI、也不存設定
     var READING_LINE_HEIGHT = 1.8;
-    var RS_KEY_ON = 'readingStyleOn', RS_KEY_FS = 'readingFontSize', RS_KEY_THEME = 'readingTheme';
+    var RS_KEY_ON = 'readingStyleOn', RS_KEY_FS = 'readingFontSize', RS_KEY_THEME = 'readingTheme',
+        RS_KEY_AUTO = 'readingFontAuto';
 
-    var rsOn = true, rsFontSize = READING_FS_DEFAULT, rsTheme = 'paper';
+    // rsFontAuto：字級依視窗寬度自動決定（預設）；按過 A−／A+ 就改用手動的 rsFontSize
+    var rsOn = true, rsFontSize = READING_FS_DEFAULT, rsFontAuto = true, rsTheme = 'paper';
+    var rsLastAutoSize = 0;
+
+    // 自動字級：同一個字級在手機上太大、在大螢幕上又太小，所以依視窗寬度分三段。
+    // 斷點與桌面版相同（iPhone 直式 < 480 → 18，橫式／iPad → 20）
+    function rsAutoFontSize() {
+        var w = window.innerWidth || document.documentElement.clientWidth || 390;
+        return w < 480 ? 18 : (w < 1600 ? 20 : 22);
+    }
+
+    function rsEffectiveFontSize() {
+        return rsFontAuto ? rsAutoFontSize() : rsFontSize;
+    }
     // 使用者在儲存值讀回來之前已經改過的欄位：讀取完成時不覆蓋它
     var rsTouched = {};
     var rsBtnEl = null, rsPanelEl = null, rsPanelOpen = false;
@@ -1595,10 +1611,11 @@
             return Promise.all([
                 GM.getValue(RS_KEY_ON, true),
                 GM.getValue(RS_KEY_FS, READING_FS_DEFAULT),
-                GM.getValue(RS_KEY_THEME, 'paper')
+                GM.getValue(RS_KEY_THEME, 'paper'),
+                GM.getValue(RS_KEY_AUTO, true)
             ]).then(function(v) {
                 if (!rsTouched.on) rsOn = v[0] !== false;
-                if (!rsTouched.fs) rsFontSize = rsClampFont(v[1]);
+                if (!rsTouched.fs) { rsFontSize = rsClampFont(v[1]); rsFontAuto = v[3] !== false; }
                 if (!rsTouched.theme) rsTheme = rsValidTheme(v[2]);
                 applyReadingStyle();
                 rsRenderPanel();
@@ -1627,12 +1644,14 @@
                 var sels = (!sel.trim() || /^[\/(]/.test(sel.trim())) ? [] : [':is(' + sel.trim() + ')'];
                 css += 'html, body { background: ' + t.bg + ' !important; }\n' +
                        '[data-ap-bg] { background: ' + t.bg + ' !important; }\n';
+                var fs = rsEffectiveFontSize();
+                rsLastAutoSize = rsAutoFontSize();
                 sels.forEach(function(s) {
-                    css += s + ', ' + s + ' * { color: ' + t.fg + ' !important; font-size: ' + rsFontSize +
+                    css += s + ', ' + s + ' * { color: ' + t.fg + ' !important; font-size: ' + fs +
                            'px !important; line-height: ' + READING_LINE_HEIGHT +
                            ' !important; background-color: transparent !important; }\n' +
                            s + ' :is(h1,h2,h3), ' + s + ':is(h1,h2,h3) { font-size: ' +
-                           Math.round(rsFontSize * 1.3) + 'px !important; }\n';
+                           Math.round(fs * 1.3) + 'px !important; }\n';
                 });
                 // 正文元素本身改成透明，底色改由它的祖先（標成 data-ap-bg）畫出來
                 try {
@@ -1658,7 +1677,12 @@
         if (rsBtnEl) rsBtnEl.style.color = rsOn ? '' : '#888';
         if (!rsPanelEl) return;
         var size = rsPanelEl.querySelector('#rsSize');
-        if (size) size.textContent = rsFontSize;
+        if (size) size.textContent = rsEffectiveFontSize();
+        var autoBtn = rsPanelEl.querySelector('#rsAuto');
+        if (autoBtn) {
+            autoBtn.style.outline = rsFontAuto ? '2px solid #FF9800' : '';
+            autoBtn.style.outlineOffset = rsFontAuto ? '-2px' : '';
+        }
         var sws = rsPanelEl.querySelectorAll('.rsSw');
         for (var i = 0; i < sws.length; i++) {
             var cur = sws[i].getAttribute('data-theme') === rsTheme;
@@ -1681,12 +1705,39 @@
         rsRenderPanel();
     }
 
+    // A−／A+ 以「目前看到的字級」為起點（自動模式下就是自動值），按下後改為手動
     function rsSetFont(delta) {
-        var v = rsClampFont(rsFontSize + delta);
-        if (v === rsFontSize) return;
+        var v = rsClampFont(rsEffectiveFontSize() + delta);
+        if (v === rsFontSize && !rsFontAuto) return;
         rsFontSize = v;
+        rsFontAuto = false;
         rsSave(RS_KEY_FS, v);
+        rsSave(RS_KEY_AUTO, false);
         rsChanged('fs');
+    }
+
+    function rsSetAuto() {
+        if (rsFontAuto) return;
+        rsFontAuto = true;
+        rsSave(RS_KEY_AUTO, true);
+        rsChanged('fs');
+    }
+
+    // 自動字級模式下，旋轉螢幕、分割畫面都會改變寬度；只在跨過斷點時才重套樣式
+    var rsResizeInstalled = false, rsResizeRaf = 0;
+    function rsInstallResize() {
+        if (rsResizeInstalled) return;
+        rsResizeInstalled = true;
+        window.addEventListener('resize', function() {
+            if (rsResizeRaf) return;
+            rsResizeRaf = requestAnimationFrame(function() {
+                rsResizeRaf = 0;
+                if (!rsFontAuto || !rsOn || !curSite) return;
+                if (rsAutoFontSize() === rsLastAutoSize) return;
+                applyReadingStyle();
+                rsRenderPanel();
+            });
+        });
     }
 
     function rsSetTheme(name) {
@@ -1715,13 +1766,15 @@
                    '<button class="fbtn" data-act="up" aria-label="字級放大">A+</button>' +
                '</div>' +
                '<div class="row">' + sw + '</div>' +
-               '<div class="row"><button id="rsToggle" data-act="toggle"></button></div>';
+               '<div class="row"><button id="rsAuto" data-act="auto" aria-label="依視窗寬度自動決定字級">自動</button>' +
+                   '<button id="rsToggle" data-act="toggle"></button></div>';
     }
 
     // 規則命中、DOM 就緒時呼叫：先用預設值套上，讀回儲存值後再套一次
     function rsInit() {
         applyReadingStyle();
         rsLoadSettings();
+        rsInstallResize();
     }
 
     // ========== 初始化 ==========
