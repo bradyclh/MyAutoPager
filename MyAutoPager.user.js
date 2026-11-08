@@ -2929,6 +2929,9 @@
     function dlGuessTitle(doc) {
         var m = doc.querySelector('meta[property="og:novel:book_name"], meta[name="og:novel:book_name"]');
         if (m && m.getAttribute('content')) return m.getAttribute('content').trim();
+        // 「《書名》 第N章 … - 站名」：有書名號就取書名號內（用分隔符切常切到站名）
+        var bm = /《([^》]{1,100})》/.exec(doc.title || '');
+        if (bm) return bm[1].trim();
         var parts = (doc.title || '').split(/\s*[_|｜\-–—]\s*/).filter(Boolean);
         return (parts.length >= 2 ? parts[1] : parts[0] || '').trim().slice(0, 100);
     }
@@ -3129,6 +3132,9 @@
             var tailUrl = stored ? info.chapters[stored - 1].url : null;
 
             var url, skipFirst = false, start = false, prevUrl = tailUrl;
+            // atTail：這次抓的內容接在全書最後。只有這時候才更新伺服器的續抓點；
+            // 在書的前段補抓時中途停止，不能把指向書尾的續抓點改寫成中段
+            var atTail = mode === 'resume' || !stored;
             if (mode === 'resume') {
                 if (!info.book.next_url) throw new Error('上次已經抓到最後一章，沒有可續抓的位置');
                 url = info.book.next_url; skipFirst = !!info.book.next_skip;
@@ -3144,12 +3150,14 @@
                         '」）。\n\n本章在已存範圍「之前」嗎？\n確定＝插在最前面；取消＝接在最後面');
                     if (before) { start = true; prevUrl = null; }
                 }
+                if (!start) atTail = true;
             }
 
             var visited = {}, batch = [], batchChars = 0, cur = null, jumped = false, ended = false;
             var upload = async function(next) {
                 if (!batch.length && !next) return;
-                var body = { chapters: batch, next: next };
+                var body = { chapters: batch };
+                if (next && atTail) body.next = next;
                 if (start) body.start = true; else if (prevUrl) body.prevUrl = prevUrl;
                 dlStatus('上傳 ' + batch.length + ' 章…');
                 var res = await dlRetry(function() { return dlApi(cfg, 'POST', bp + '/chapters', body); }, '上傳');
@@ -3167,13 +3175,16 @@
 
             while (url && !job.stop) {
                 if (visited[url]) break;          // 防呆：nextL 繞回已抓過的頁面
-                // 碰到已存過的章節：後面那段也存過了，直接跳到上次的結尾續抓
-                if (known[url] && !skipFirst && !cur) {
+                // 碰到已存過的章節：後面那段也存過了，直接跳到上次的結尾續抓。
+                // 已存的網址一定是某章的第一頁，所以手上暫存的那章到此已完整
+                if (known[url] && !skipFirst) {
+                    if (cur) { finish(cur); cur = null; }
                     await upload();
                     prevUrl = tailUrl;
                     start = false;
                     if (jumped || !info.book.next_url) { ended = true; url = ''; break; }
                     jumped = true;
+                    atTail = true;
                     dlStatus('「' + (job.lastTitle || '本章') + '」之後已存過，跳到上次的結尾續抓…');
                     url = info.book.next_url; skipFirst = !!info.book.next_skip;
                     continue;
@@ -3204,7 +3215,7 @@
 
             if (job.stop) {
                 await upload({ url: cur ? cur.url : url, skip: false });
-                dlStatus('已停止。存了 ' + job.chapters + ' 章，可用「續抓新章節」接著抓。');
+                dlStatus('已停止。存了 ' + job.chapters + ' 章，' + (atTail ? '可用「續抓新章節」接著抓。' : '前段還沒補齊，之後再按「整本」即可（已存的會跳過）。'));
             } else if (ended) {
                 await upload();
                 dlStatus('完成：新增 ' + job.chapters + ' 章，全書共 ' + (job.total || stored) + ' 章。');
