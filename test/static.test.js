@@ -193,6 +193,85 @@ check('非章節頁不會誤匹配', () => {
     return out;
 });
 
+console.log('\n== 下載到閱讀器（共用區塊） ==');
+
+const fs = require('fs');
+const vm = require('vm');
+function sharedBlock(src) {
+    const a = src.indexOf('// ==== dl-shared-begin ====');
+    const b = src.indexOf('// ==== dl-shared-end ====');
+    if (a < 0 || b < 0) return null;
+    return src.slice(a, b);
+}
+const dlDesktop = sharedBlock(fs.readFileSync(require.resolve('../MyAutoPager.user.js'), 'utf8'));
+const dlIphone = sharedBlock(fs.readFileSync(require.resolve('../MyAutoPager-iPhone.user.js'), 'utf8'));
+
+check('兩版的下載共用區塊逐字相同', () => {
+    if (!dlDesktop) return ['桌面版找不到 dl-shared-begin／end 標記'];
+    if (!dlIphone) return ['iPhone 版找不到 dl-shared-begin／end 標記'];
+    if (dlDesktop === dlIphone) return [];
+    const la = dlDesktop.split('\n'), lb = dlIphone.split('\n');
+    for (let i = 0; i < Math.max(la.length, lb.length); i++) {
+        if (la[i] !== lb[i]) return [`第 ${i + 1} 行起不同：\n      桌面   ${la[i]}\n      iPhone ${lb[i]}`];
+    }
+    return ['內容不同'];
+});
+
+// 共用區塊只定義函式與常數，可以單獨在 vm 裡求值，測其中不碰 DOM 的純函式
+const dl = (() => {
+    const ctx = { URL, console };
+    vm.createContext(ctx);
+    vm.runInContext(dlDesktop + '\nthis.api = { dlTitleKey, dlJoinLines, dlShape, dlLastNum, dlBookId, dlAbsUrl, dlNormHost };', ctx);
+    return ctx.api;
+})();
+
+function same(out, label, actual, expected) {
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+        out.push(`${label}：得到 ${JSON.stringify(actual)}，預期 ${JSON.stringify(expected)}`);
+    }
+}
+
+check('同章分頁的標題去掉頁碼後相同（才會合併）', () => {
+    const out = [];
+    same(out, '（2 / 3）', dl.dlTitleKey('第12章 風起（2 / 3）'), dl.dlTitleKey('第12章 風起'));
+    same(out, '(2/3)', dl.dlTitleKey('第12章 風起(2/3)'), '第12章風起');
+    same(out, '（2）', dl.dlTitleKey('第12章（2）'), '第12章');
+    same(out, '_2', dl.dlTitleKey('第12章_2'), '第12章');
+    // 不同章不能被當成同一章
+    if (dl.dlTitleKey('第12章') === dl.dlTitleKey('第13章')) out.push('第12章 與 第13章 被視為同一章');
+    if (dl.dlTitleKey('第1章') === dl.dlTitleKey('第11章')) out.push('第1章 與 第11章 被視為同一章');
+    same(out, '空標題', dl.dlTitleKey(''), '');
+    return out;
+});
+
+check('分頁切在句子中間時接回同一段', () => {
+    const out = [];
+    same(out, '沒有句末標點', dl.dlJoinLines(['他說不'], ['過眨眼的功夫。', '下一段']), ['他說不過眨眼的功夫。', '下一段']);
+    same(out, '下一頁以標點開頭', dl.dlJoinLines(['他說完了。'], ['」然後走了。']), ['他說完了。」然後走了。']);
+    same(out, '正常換段不接', dl.dlJoinLines(['第一段。'], ['第二段。']), ['第一段。', '第二段。']);
+    same(out, '空的一邊', dl.dlJoinLines([], ['a']), ['a']);
+    return out;
+});
+
+check('目錄頁挑章節連結用的網址形狀', () => {
+    const out = [];
+    same(out, 'oop 續頁與首頁同形', dl.dlShape('https://oop.tw/areada/x/a22487_2a.html'), dl.dlShape('https://oop.tw/areada/x/a1a.html'));
+    same(out, 'novels 續頁', dl.dlShape('https://novels.com.tw/novels/x/206331926_2.html'), '/novels/x/#.html');
+    if (dl.dlShape('https://uukanshu.cc/b/123/') === dl.dlShape('https://uukanshu.cc/b/123/456.html')) out.push('書頁與章節頁形狀相同');
+    same(out, '最後一段數字', dl.dlLastNum('https://www.qimao.com/shuku/195958-47540682/'), 47540682);
+    return out;
+});
+
+check('書本 id：電腦與手機網域前綴不同仍是同一本', () => {
+    const out = [];
+    same(out, '目錄網址', dl.dlBookId('https://www.twkan.com/book/112514/index.html', 'https://www.twkan.com/txt/112514/1'), 'twkan.com/book/112514/index.html');
+    same(out, 'm. 前綴', dl.dlBookId('https://m.twkan.com/book/112514/index.html', ''), 'twkan.com/book/112514/index.html');
+    same(out, '沒有目錄時用章節目錄', dl.dlBookId('', 'https://ttks.tw/novel/chapters/abc/16.html'), 'ttks.tw/novel/chapters/abc/');
+    same(out, 'javascript: 連結不算', dl.dlAbsUrl('javascript:void(0)', 'https://a.com/'), '');
+    same(out, '相對網址以來源頁解析', dl.dlAbsUrl('17.html#top', 'https://a.com/x/16.html'), 'https://a.com/x/17.html');
+    return out;
+});
+
 console.log(`\n${failed ? '✗ 失敗' : '✓ 全數通過'} — ${passed} 項通過、${failed} 項失敗`);
 
 if (failed) {

@@ -1,0 +1,13 @@
+{
+  "name": "myautopager-reader",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --no-warnings test/api.test.mjs",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
