@@ -653,6 +653,10 @@
         pageE.splice(pageE.indexOf(newH1), 1);
         var docArts = document.querySelectorAll('#article');
         var prevArt = docArts[docArts.length - 1];
+        // 每頁 #article 結尾有個 <br>，續頁接上時會在接縫多出一行空白
+        while (prevArt && prevArt.lastChild && (prevArt.lastChild.nodeName === 'BR' || (prevArt.lastChild.nodeType === 3 && !prevArt.lastChild.textContent.trim()))) {
+            prevArt.removeChild(prevArt.lastChild);
+        }
         var prevPs = prevArt ? prevArt.querySelectorAll('p') : [];
         var prevP = prevPs[prevPs.length - 1];
         var firstP = arts[0] && arts[0].querySelector('p');
