@@ -143,6 +143,28 @@ return [
             hiddenAds: [],
         },
     },
+    {
+        key: 'oop',
+        verified: false,
+        // 一章拆成多頁：第一頁 a<id>a.html，之後 a<id>_2a.html
+        chapter: [
+            ['www.oop.tw', '/areada/a33508762a/a22487a.html'],
+            ['www.oop.tw', '/areada/a33508762a/a22487_2a.html'],
+        ],
+        // 書頁（末章末頁的「沒有了」也指向這裡）
+        notChapter: [['www.oop.tw', '/abooka/a33508762a/']],
+        e2e: {
+            // 從某章最後一頁起跑：同章各頁的 <title> 相同，起跑在章首會讓「文件標題已更新」誤報
+            start: 'https://www.oop.tw/areada/a33508762a/a22487_2a.html',
+            last: 'https://www.oop.tw/areada/a33508762a/a23375_2a.html',
+            chapterBlock: '#article',
+            titleEl: 'h1.chapter-title',
+            navEl: '.reading-nav',
+            textEl: 'p',
+            singletons: [],
+            hiddenAds: ['#article .mid-content-ad'],
+        },
+    },
 ];
 
 }));

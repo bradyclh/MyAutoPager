@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.27
+// @version      1.2.28
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -718,6 +718,28 @@
                         // 解密必須在 cleanContent 之前：cleanContent 會移除裝著密文的 <script>
                         return cleanContent(novelsTwDecrypt(pageE), {keepText: '#article'});
                     }
+                }
+            },
+            oop: {
+                // oop.tw（短篇小說）：一章拆成多頁（a22487a.html → a22487_2a.html），
+                // 章內「下一頁」與跨章「下一章」都是 #next_url
+                host: '/(^|\\.)oop\\.tw$/',
+                url: "/^\\/areada\\/[^\\/]+\\/a\\d+(_\\d+)?a\\.html/",
+                // 首頁正文中夾的廣告版位（插入的頁面由 cleanContent 清掉）
+                style: '#article .mid-content-ad, #article [id^="onead"], #article ins, #article iframe, .ss-vip-ad {display: none !important;}',
+                history: true, retry: 3000, popupBlock: true,
+                // 正文一句一個 <p>，keepText 防推廣關鍵字誤刪
+                cleanOpts: { keepText: '#article' },
+                pager: {
+                    // 末章末頁的「沒有了」指回書頁（/ 結尾），[href$=".html"] 排除之 → nextL 落空即乾淨停止
+                    nextL: 'a#next_url[href$=".html"]',
+                    // h1 只有章號（同章各頁相同），「第N章 標題」在 #article 第一段
+                    pageE: 'h1.chapter-title, #article',
+                    replaceE: '.reading-nav',
+                    scrollD: 2000
+                },
+                function: {
+                    bF: function(pageE) { return cleanContent(pageE, {keepText: '#article'}); }
                 }
             },
 
