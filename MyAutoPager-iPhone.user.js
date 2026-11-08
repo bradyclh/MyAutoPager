@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.5.2
+// @version      1.5.3
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -1677,14 +1677,14 @@
         night: { name: '夜間', bg: '#1e1e1e', fg: '#c8c8c8' }
     };
     var READING_THEME_ORDER = ['paper', 'white', 'green', 'night'];
-    var READING_FS_MIN = 14, READING_FS_MAX = 32, READING_FS_STEP = 2, READING_FS_DEFAULT = 20;
+    var READING_FS_MIN = 14, READING_FS_MAX = 60, READING_FS_STEP = 2, READING_FS_DEFAULT = 20;
     // 行高固定，不提供 UI、也不存設定
     var READING_LINE_HEIGHT = 1.8;
     var RS_KEY_ON = 'readingStyleOn', RS_KEY_FS = 'readingFontSize', RS_KEY_THEME = 'readingTheme',
         RS_KEY_AUTO = 'readingFontAuto';
 
     // rsFontAuto：字級依視窗寬度自動決定（預設）；按過 A−／A+ 就改用手動的 rsFontSize
-    var rsOn = true, rsFontSize = READING_FS_DEFAULT, rsFontAuto = true, rsTheme = 'paper';
+    var rsOn = true, rsFontSize = READING_FS_DEFAULT, rsFontAuto = true, rsTheme = 'night';
     var rsLastAutoSize = 0;
 
     // 自動字級：同一個字級在手機上太大、在大螢幕上又太小，所以依視窗寬度分三段。
@@ -1708,7 +1708,7 @@
     }
 
     function rsValidTheme(name) {
-        return (typeof name === 'string' && Object.prototype.hasOwnProperty.call(READING_THEMES, name)) ? name : 'paper';
+        return (typeof name === 'string' && Object.prototype.hasOwnProperty.call(READING_THEMES, name)) ? name : 'night';
     }
 
     // 比照 asLoadSpeed／asSaveSpeed 的 GM.getValue／GM.setValue Promise 寫法。
@@ -1718,7 +1718,7 @@
             return Promise.all([
                 GM.getValue(RS_KEY_ON, true),
                 GM.getValue(RS_KEY_FS, READING_FS_DEFAULT),
-                GM.getValue(RS_KEY_THEME, 'paper'),
+                GM.getValue(RS_KEY_THEME, 'night'),   // 預設夜間
                 GM.getValue(RS_KEY_AUTO, true)
             ]).then(function(v) {
                 if (!rsTouched.on) rsOn = v[0] !== false;
@@ -2154,7 +2154,13 @@
         try { same = new URL(url).origin === location.origin; } catch (e) {}
         // 同源走原生 fetch：帶得到站方用 JS 設的第一方 cookie（見 fetchNextPage 的說明）
         if (same) {
-            return fetch(url, { credentials: 'include', headers: { 'Accept': 'text/html,application/xhtml+xml' } }).then(function(res) {
+            // fetch 沒有預設逾時：站方卡住不回時，整個下載會無聲停在這裡、也不回報。逾時就中止，交給 dlRetry 重試
+            var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+            if (ctrl) dlSleep(DL_FETCH_TIMEOUT).then(function() { ctrl.abort(); });
+            return fetch(url, { credentials: 'include', headers: { 'Accept': 'text/html,application/xhtml+xml' }, signal: ctrl ? ctrl.signal : undefined }).catch(function(e) {
+                if (e && e.name === 'AbortError') throw new Error('逾時（' + DL_FETCH_TIMEOUT / 1000 + ' 秒沒有回應）');
+                throw e;
+            }).then(function(res) {
                 if (!res.ok) {
                     return res.text().catch(function() { return ''; }).then(function(t) {
                         throw dlHttpError(res.status, res.headers.get('retry-after'), t);
@@ -2218,7 +2224,7 @@
 
     // ---- 下載紀錄（閱讀器書架顯示「下載中 120 / 約 350 章」） ----
     // 回報失敗不影響下載：舊版伺服器沒有這支 API、或網路一時不通，都只是書架上看不到進度
-    var DL_REPORT_EVERY = 15000;
+    var DL_REPORT_EVERY = 15000, DL_FETCH_TIMEOUT = 30000;
     function dlDevice() {
         var ua = navigator.userAgent;
         if (/iPhone/.test(ua)) return 'iPhone';
@@ -2232,6 +2238,26 @@
         return dlApi(cfg, 'PUT', bp + '/runs/' + job.runId, {
             state: state, chapters: job.chapters, est: job.est, message: message || null
         }).catch(function() {});
+    }
+
+    // 心跳用 Worker 計時（dlSleep），背景分頁也照常送出；只在下載還在跑時送
+    async function dlHeartbeat(cfg, bp, job) {
+        while (dlJob === job) {
+            await dlSleep(DL_REPORT_EVERY);
+            if (dlJob === job && Date.now() - (job.reportedAt || 0) >= DL_REPORT_EVERY - 500) {
+                dlReport(cfg, bp, job, 'running', job.lastStatus);
+            }
+        }
+    }
+
+    // 下載期間持有一把 Web Lock：Chrome 比較不會凍結或丟棄持有鎖的背景分頁（不保證，電腦休眠仍會停）
+    function dlHoldLock(job) {
+        try {
+            if (!navigator.locks || !navigator.locks.request) return;
+            navigator.locks.request('myautopager-download', function() {
+                return new Promise(function(release) { job.releaseLock = release; });
+            }).catch(function() {});
+        } catch (e) {}
     }
 
     // ---- 下載流程 ----
@@ -2315,6 +2341,8 @@
                 job.runId = run.run && run.run.id;
                 job.reportedAt = Date.now();
             } catch (e) {}
+            if (job.runId) dlHeartbeat(cfg, bp, job);
+            dlHoldLock(job);
             var known = {};
             info.chapters.forEach(function(c) { known[c.url] = true; });
             var stored = info.chapters.length;
@@ -2422,7 +2450,7 @@
                     cur = { url: pageUrl, lastUrl: pageUrl, key: page.key, title: page.title, lines: page.lines };
                 }
                 dlStatus(dlProgressText(job, page.title));
-                if (Date.now() - (job.reportedAt || 0) > DL_REPORT_EVERY) dlReport(cfg, bp, job, 'running');
+                if (Date.now() - (job.reportedAt || 0) > DL_REPORT_EVERY) dlReport(cfg, bp, job, 'running', job.lastStatus);
                 // 未完成的那章不上傳；續抓位置指向它的第一頁，下次從頭抓這章
                 if (batch.length >= DL_BATCH_MAX || batchChars >= DL_BATCH_CHARS) await upload({ url: cur.url, skip: false });
                 url = page.next;
@@ -2459,6 +2487,7 @@
             job.endMsg = '下載中斷：' + (e.message || e) + (job.chapters ? '（已存 ' + job.chapters + ' 章之前的部分）' : '');
             dlStatus(job.endMsg);
         } finally {
+            if (job.releaseLock) job.releaseLock();
             if (job.runId) await dlReport(cfg, bp, job, job.endState || 'error', job.endMsg);
             window.removeEventListener('beforeunload', dlBeforeUnload);
             dlJob = null;
@@ -2486,6 +2515,7 @@
 
     // ---- 面板 ----
     function dlStatus(msg) {
+        if (dlJob) dlJob.lastStatus = msg;
         if (!dlUi) return;
         dlUi.q('#dlStatus').textContent = msg;
         if (dlJob) dlUi.q('#mini').textContent = '⬇ ' + dlJob.chapters + (dlJob.est > dlJob.chapters ? ' / ' + dlJob.est : '') + ' 章' + (dlJob.slow > 1.05 ? ' · 放慢中' : '');

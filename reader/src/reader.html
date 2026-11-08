@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="zh-Hant" data-theme="night">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -165,7 +165,7 @@ function defaultDevice() {
 var cfg = {
     token: LS.get('token', ''),
     device: LS.get('device', '') || defaultDevice(),
-    theme: LS.get('theme', 'paper'),
+    theme: LS.get('theme', 'night'),   // 預設夜間；選過背景的裝置沿用自己的選擇
     fs: LS.get('fs', 20),
     fsAuto: LS.get('fsAuto', true),
     speed: LS.get('speed', 40)
@@ -336,7 +336,7 @@ function dlLine(b) {
         bar.appendChild(fill);
         box.appendChild(bar);
     }
-    if ((st === 'error' || st === 'stopped') && b.dl_message) box.appendChild(el('div', 'meta', b.dl_message));
+    if ((st === 'error' || st === 'stopped' || st === 'running') && b.dl_message) box.appendChild(el('div', 'meta', b.dl_message));
     return box;
 }
 
@@ -640,7 +640,7 @@ document.querySelectorAll('[data-close]').forEach(function(b) { b.onclick = clos
 $('aa').addEventListener('click', function(e) {
     var b = e.target.closest('button');
     if (!b) return;
-    if (b.hasAttribute('data-fs')) { cfg.fs = Math.max(14, Math.min(32, effFs() + +b.getAttribute('data-fs'))); cfg.fsAuto = false; LS.set('fs', cfg.fs); LS.set('fsAuto', false); }
+    if (b.hasAttribute('data-fs')) { cfg.fs = Math.max(14, Math.min(60, effFs() + +b.getAttribute('data-fs'))); cfg.fsAuto = false; LS.set('fs', cfg.fs); LS.set('fsAuto', false); }
     else if (b.id === 'fsAuto') { cfg.fsAuto = true; LS.set('fsAuto', true); }
     else if (b.hasAttribute('data-theme')) { cfg.theme = b.getAttribute('data-theme'); LS.set('theme', cfg.theme); }
     else if (b.hasAttribute('data-sp')) { cfg.speed = Math.max(10, Math.min(200, cfg.speed + +b.getAttribute('data-sp'))); LS.set('speed', cfg.speed); }
