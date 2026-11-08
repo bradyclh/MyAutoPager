@@ -155,6 +155,7 @@ return [
         notChapter: [['www.oop.tw', '/abooka/a33508762a/']],
         e2e: {
             // 從某章最後一頁起跑：同章各頁的 <title> 相同，起跑在章首會讓「文件標題已更新」誤報
+            // 另外同章續頁不插入重複的 h1（oopFix 接回切斷的段落），起跑在章首也會讓「標題數與章節數同步」誤報
             start: 'https://www.oop.tw/areada/a33508762a/a22487_2a.html',
             last: 'https://www.oop.tw/areada/a33508762a/a23375_2a.html',
             chapterBlock: '#article',

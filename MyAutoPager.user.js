@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.29
+// @version      1.2.30
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -726,8 +726,9 @@
                 host: '/(^|\\.)oop\\.tw$/',
                 url: "/^\\/areada\\/[^\\/]+\\/a\\d+(_\\d+)?a\\.html/",
                 // 首頁正文中夾的廣告版位（插入的頁面由 cleanContent 清掉）；
-                // 首頁 h1 靠 .chapter-header 置中，插入的 h1 不在其內，故統一指定置中；正文也水平置中
-                style: '#article .mid-content-ad, #article [id^="onead"], #article ins, #article iframe, .ss-vip-ad {display: none !important;} h1.chapter-title, #article, #article * {text-align: center !important;}',
+                // 首頁 h1 靠 .chapter-header 置中，插入的 h1 不在其內，故統一指定置中；
+                // 大螢幕上正文區塊會撐滿整個寬度、文字全擠在左側，故限寬 40em（約 40 字一行）並水平置中
+                style: '#article .mid-content-ad, #article [id^="onead"], #article ins, #article iframe, .ss-vip-ad {display: none !important;} h1.chapter-title {text-align: center !important;} #article {max-width: 40em; margin-left: auto !important; margin-right: auto !important;}',
                 history: true, retry: 3000, popupBlock: true,
                 // 正文一句一個 <p>，keepText 防推廣關鍵字誤刪
                 cleanOpts: { keepText: '#article' },
@@ -740,7 +741,7 @@
                     scrollD: 2000
                 },
                 function: {
-                    bF: function(pageE) { return cleanContent(pageE, {keepText: '#article'}); }
+                    bF: function(pageE) { return cleanContent(oopFix(pageE), {keepText: '#article'}); }
                 }
             },
 
@@ -1922,6 +1923,57 @@
                     el.innerHTML = '<p>（MyAutoPager：正文解密失敗，站方可能已更換金鑰，請重新整理此頁閱讀）</p>';
                 });
         });
+        return pageE;
+    }
+
+    // oop.tw 反爬：#article 的 data-ct=N 表示最後 N 個 <p> 的文字是倒序存放，由站方 JS 於載入後轉正；
+    // XHR 取回的頁面不會執行站方 JS，這裡自行轉正。另移除站方混在正文的推廣句（「oop.tw 無錯章節」等）。
+    // 一章拆成多頁時，站方按字數切頁，切點常落在句子中間（「不」｜「過眨眼的功夫…」）：
+    // 同章續頁（新頁 h1 章號與畫面上最後一個相同）就把被切開的段落接回上一段，並丟掉重複的 h1。
+    var OOP_PROMO_RE = /ｏｏｐ|𝗼𝗼𝗽|𝐨𝐨𝐩|oop\s*[.．]\s*tw|無錯章節|記住我們的域名/i;
+    function oopDropPromo(ps) {
+        for (var i = 0; i < ps.length; i++) {
+            var t = ps[i].textContent.trim();
+            if (t.length < 40 && OOP_PROMO_RE.test(t)) ps[i].remove();
+        }
+    }
+    function oopFix(pageE) {
+        var arts = pageE.filter(function(el) { return el.id === 'article'; });
+        arts.forEach(function(art) {
+            var ct = parseInt(art.getAttribute('data-ct'), 10) || 0;
+            var ps = art.querySelectorAll('p');
+            for (var i = Math.max(0, ps.length - ct); i < ps.length; i++) {
+                ps[i].textContent = Array.from(ps[i].textContent).reverse().join('');
+            }
+            art.removeAttribute('data-ct');
+            oopDropPromo(art.querySelectorAll('p'));
+        });
+        // 首頁由站方 JS 插入的推廣句也一併清掉
+        oopDropPromo(document.querySelectorAll('#article p'));
+
+        var newH1 = pageE.filter(function(el) { return el.matches && el.matches('h1.chapter-title'); })[0];
+        var h1s = document.querySelectorAll('h1.chapter-title');
+        var lastH1 = h1s[h1s.length - 1];
+        if (!newH1 || !lastH1 || newH1.textContent.trim() !== lastH1.textContent.trim()) return pageE;
+        // 同章續頁
+        pageE.splice(pageE.indexOf(newH1), 1);
+        var docArts = document.querySelectorAll('#article');
+        var prevArt = docArts[docArts.length - 1];
+        // 每頁 #article 結尾有個 <br>，續頁接上時會在接縫多出一行空白
+        while (prevArt && prevArt.lastChild && (prevArt.lastChild.nodeName === 'BR' || (prevArt.lastChild.nodeType === 3 && !prevArt.lastChild.textContent.trim()))) {
+            prevArt.removeChild(prevArt.lastChild);
+        }
+        var prevPs = prevArt ? prevArt.querySelectorAll('p') : [];
+        var prevP = prevPs[prevPs.length - 1];
+        var firstP = arts[0] && arts[0].querySelector('p');
+        if (prevP && firstP) {
+            var prevT = prevP.textContent.replace(/\s+$/, ''), nextT = firstP.textContent.replace(/^\s+/, '');
+            // 上一段沒以句末標點結尾，或下一段以標點開頭 → 視為同一段被切開
+            if (!/[。！？!?…”」』）)]$/.test(prevT) || /^[，。、！？；：,.!?;:”」』）)]/.test(nextT)) {
+                prevP.textContent = prevT + nextT;
+                firstP.remove();
+            }
+        }
         return pageE;
     }
 
