@@ -952,8 +952,9 @@
             // 章內「下一頁」與跨章「下一章」都是 #next_url
             host: 'oop.tw',
             url: /^\/areada\/[^\/]+\/a\d+(_\d+)?a\.html/,
-            // 首頁正文中夾的廣告版位（插入的頁面由 cleanContent 清掉）
-            style: '#article .mid-content-ad, #article [id^="onead"], #article ins, #article iframe, .ss-vip-ad {display:none!important}',
+            // 首頁正文中夾的廣告版位（插入的頁面由 cleanContent 清掉）；
+            // 首頁 h1 靠 .chapter-header 置中，插入的 h1 不在其內，故統一指定置中
+            style: '#article .mid-content-ad, #article [id^="onead"], #article ins, #article iframe, .ss-vip-ad {display:none!important} h1.chapter-title {text-align:center!important}',
             pager: {
                 // 末章末頁的「沒有了」指回書頁（/ 結尾），[href$=".html"] 排除之 → nextL 落空即乾淨停止
                 nextL: 'a#next_url[href$=".html"]',
