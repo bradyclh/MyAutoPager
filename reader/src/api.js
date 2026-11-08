@@ -94,7 +94,7 @@ async function listRuns(env, id) {
 async function startRun(env, id, body) {
     if (!(await getBookRow(env, id))) throw new HttpError(404, '找不到這本書，請先建立');
     const now = Date.now();
-    const mode = ['here', 'all', 'resume'].indexOf(body.mode) >= 0 ? body.mode : null;
+    const mode = ['here', 'all', 'front', 'resume'].indexOf(body.mode) >= 0 ? body.mode : null;
     const device = typeof body.device === 'string' ? body.device.slice(0, 64) : null;
     await env.DB.batch([
         // 同一本書上一筆還掛著 running（分頁被關掉、沒來得及回報），新的開始時標成中斷

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.3.1
+// @version      1.3.2
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -3208,19 +3208,23 @@
             if (!seen[u]) { seen[u] = true; list.push(u); }
         }
         list.sort(function(a, b) { return dlLastNum(a) - dlLastNum(b); });
-        return { first: first || list[0] || '', list: list };
+        // 目錄常分頁或只列最新幾章，連結數會比實際少；站方寫明的「共 N 章」「目錄（N章）」比較準
+        var txt = ((doc.body && doc.body.textContent) || '').replace(/\s+/g, '');
+        var declared = 0, re = /(?:共|全|目[錄录][（(]?)(\d{1,5})[章回]/g, m;
+        while ((m = re.exec(txt))) declared = Math.max(declared, parseInt(m[1], 10));
+        return { first: first || list[0] || '', list: list, total: Math.max(list.length, declared) };
     }
 
-    // 估計還有幾章：本章在目錄清單中的位置之後還剩多少（目錄分頁時只是下限，所以標「約」）
+    // 估計還有幾章：總章數減去本章在目錄清單中的位置；本章不在清單裡（目錄只列一部分）就不估
     function dlEstimate(toc, fromUrl) {
         if (!toc || !toc.list.length) return 0;
         var i = toc.list.indexOf(fromUrl);
-        return i >= 0 ? toc.list.length - i : 0;
+        return i >= 0 ? toc.total - i : 0;
     }
 
     function dlProgressText(job, title) {
         var t = '已抓 ' + job.chapters + ' 章';
-        if (job.est) {
+        if (job.est > job.chapters) {
             t += ' / 約 ' + job.est + ' 章';
             var left = job.est - job.chapters;
             if (job.chapters >= 3 && left > 0) {
@@ -3233,7 +3237,8 @@
         return t + (title ? '：' + title : '');
     }
 
-    // mode：'here' 從本章、'all' 整本、'resume' 從上次結尾續抓新章節
+    // mode：'here' 從本章到最後；'all' 整本 = 先跑一次 'here'（讓正在讀的這章馬上能讀），
+    // 成功後自動接著跑 'front'（從第一章補到本章之前，碰到已存的就停）；'resume' 從上次結尾續抓新章節
     async function dlStart(mode) {
         if (dlJob) return;
         var cfg = await dlLoadCfg();
@@ -3277,13 +3282,14 @@
                 if (info.book.next_url) { url = info.book.next_url; skipFirst = !!info.book.next_skip; }
                 // 沒記到續抓點（例如上次在書的前段補抓）：重讀已存的最後一章，從它的「下一章」接著抓
                 else { url = tailUrl; skipFirst = true; }
-            } else if (mode === 'all') {
-                if (!tocUrl) throw new Error('這頁找不到「目錄」連結，請到第一章再按「從本章開始」');
+            } else if (mode === 'front') {
+                if (!tocUrl) throw new Error('這頁找不到「目錄」連結，沒辦法補前面的章節；可到第一章按「從本章開始」');
                 dlStatus('從目錄找第一章…');
                 var tocAll = await dlTocInfo(tocUrl);
                 url = tocAll.first;
-                if (!url) throw new Error('目錄頁裡找不到章節連結，請到第一章再按「從本章開始」');
-                job.est = tocAll.list.length;
+                if (!url) throw new Error('目錄頁裡找不到章節連結，沒辦法補前面的章節；可到第一章按「從本章開始」');
+                // 要補的章數 ≈ 本章在目錄中的位置
+                job.est = Math.max(0, tocAll.list.indexOf(location.href));
                 start = true; prevUrl = null;
             } else {
                 url = location.href;
@@ -3331,7 +3337,7 @@
                     await upload();
                     prevUrl = tailUrl;
                     start = false;
-                    if (jumped || !info.book.next_url) { ended = true; url = ''; break; }
+                    if (jumped || !info.book.next_url || mode === 'front') { ended = true; url = ''; break; }
                     jumped = true;
                     atTail = true;
                     dlStatus('「' + (job.lastTitle || '本章') + '」之後已存過，跳到上次的結尾續抓…');
@@ -3396,7 +3402,9 @@
             }
             if (!job.endState) {
                 job.endState = 'done';
-                job.endMsg = '完成：新增 ' + job.chapters + ' 章，全書共 ' + (job.total || stored) + ' 章。';
+                job.endMsg = mode === 'all'
+                    ? '本章到最後已完成（新增 ' + job.chapters + ' 章），接著回頭補前面的章節…'
+                    : '完成：新增 ' + job.chapters + ' 章，全書共 ' + (job.total || stored) + ' 章。';
                 dlStatus(job.endMsg);
             }
             job.done = true;
@@ -3411,6 +3419,7 @@
             dlLastBookId = job.bookId || dlLastBookId;
             if (dlUi && job.chapters) dlUi.canResume = true;
             dlRender();
+            if (mode === 'all' && job.endState === 'done') setTimeout(function() { dlStart('front'); }, 1500);
         }
     }
 
@@ -3433,7 +3442,7 @@
     function dlStatus(msg) {
         if (!dlUi) return;
         dlUi.q('#dlStatus').textContent = msg;
-        if (dlJob) dlUi.q('#mini').textContent = '⬇ ' + dlJob.chapters + (dlJob.est ? ' / ' + dlJob.est : '') + ' 章' + (dlJob.slow > 1.05 ? ' · 放慢中' : '');
+        if (dlJob) dlUi.q('#mini').textContent = '⬇ ' + dlJob.chapters + (dlJob.est > dlJob.chapters ? ' / ' + dlJob.est : '') + ' 章' + (dlJob.slow > 1.05 ? ' · 放慢中' : '');
     }
 
     function dlRender() {
@@ -3482,9 +3491,10 @@
             '<div id="p" role="dialog" aria-label="下載到閱讀器">' +
               '<h3><span>⬇ 下載到閱讀器</span><button id="x" aria-label="關閉">×</button></h3>' +
               '<label for="dlTitle">書名</label><input id="dlTitle">' +
-              '<div class="row"><button id="dlHere" class="pri">從本章開始</button><button id="dlAll">整本（第一章起）</button></div>' +
+              '<div class="row"><button id="dlHere" class="pri">從本章開始</button><button id="dlAll">整本</button></div>' +
               '<div class="row"><button id="dlResume">續抓新章節</button><button id="dlStop">停止</button></div>' +
               '<div id="dlStatus"></div>' +
+              '<div class="hint">整本＝先從本章抓到最後（馬上能接著讀），再回頭從第一章補到本章之前。</div>' +
               '<div class="hint">下載在背景進行，可以關掉面板繼續閱讀，右下角會顯示進度。請讓這個分頁開著（iPhone 請留在前景，Safari 會暫停背景分頁）。已存過的章節會自動跳過。</div>' +
               '<div class="row"><button id="dlRead">📚 開啟書架</button><button id="dlSet">設定</button></div>' +
               '<div id="dlCfg">' +
