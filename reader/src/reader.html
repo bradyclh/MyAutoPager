@@ -483,12 +483,14 @@ function ensureNext() {
         rendered.push(last + 1);
         // 畫面上只留最近 6 章，避免讀了一晚上之後 DOM 太大；移除上方內容要補回捲動位置
         if (rendered.length > 6) {
-            var h0 = document.documentElement.scrollHeight;
+            // 以留下來的章節量實際位移：Chrome 的 scroll anchoring 已自動補償時差值為 0，不會補兩次
+            var keep = box.querySelectorAll('.chap')[rendered.length - 6];
+            var top0 = keep.getBoundingClientRect().top;
             // 頂端的「上一章」按鈕指向已被移除的章節，一併拿掉（要往回看用目錄）
             var btn = box.querySelector('.loadmore');
             if (btn) btn.remove();
             while (rendered.length > 6) { box.querySelector('.chap').remove(); rendered.shift(); }
-            window.scrollBy(0, document.documentElement.scrollHeight - h0);
+            window.scrollBy(0, keep.getBoundingClientRect().top - top0);
         }
         prefetch(last + 2);
     }).catch(function(e) {
