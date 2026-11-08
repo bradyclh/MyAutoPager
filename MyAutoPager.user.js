@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.30
+// @version      1.2.31
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -1162,6 +1162,15 @@
         if (curSite.pager.interval === undefined) curSite.pager.interval = 500;
     }
 
+    // 翻頁觸發的基準元素（取最後一個符合者，即目前畫面上最後一段正文）；回傳 null 表示以頁底為準
+    function contentBaseElement() {
+        let sel = curSite.pager.scrollE || (curSite.popupBlock ? curSite.pager.pageE : '');
+        if (!sel) return null;
+        let all = [];
+        try { all = getAll(sel); } catch (e) {}
+        return all.length ? all[all.length - 1] : null;
+    }
+
     // 主入口：設定預設值並綁定滾動處理器
     function pageLoading() {
         if (curSite.SiteTypeID === 0 || !curSite.pager) return;
@@ -1177,14 +1186,13 @@
                 scrollD = curSite.pager.scrollD,
                 triggered = false;
 
-            // 如果指定了 scrollE 基準元素，根據元素位置判斷觸發
-            if (curSite.pager.scrollE) {
-                let scrollE = getOne(curSite.pager.scrollE);
-                if (scrollE && scrollE.offsetTop - (scrollTop + scrollHeight) <= scrollD) {
-                    triggered = true;
-                }
+            // 觸發基準：正文底部，而非整頁底部。小說站正文下方常有很長的推薦書單、留言區
+            // （如 oop.tw），以頁底為準時讀完正文還得再捲一大段才會載入下一章。
+            // scrollE 指定基準元素；未指定時小說站規則以 pageE 最後一個元素為準，其餘規則維持頁底
+            let baseE = contentBaseElement();
+            if (baseE) {
+                if (baseE.getBoundingClientRect().bottom - scrollHeight <= scrollD) triggered = true;
             } else if (document.documentElement.scrollHeight <= scrollHeight + scrollTop + scrollD) {
-                // 否則根據頁面底部距離判斷觸發
                 triggered = true;
             }
 
