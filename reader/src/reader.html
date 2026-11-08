@@ -32,23 +32,24 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 /* ---- 書架 ---- */
 #shelf { max-width: 44em; margin: 0 auto; padding: 16px; }
 #shelf h1 { font-size: 22px; margin: 8px 0 16px; }
-.book { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
-.book h2 { font-size: 18px; margin: 0 0 4px; }
+.book { padding: 20px 0; border-bottom: 1px solid var(--line); }
+.book:last-child { border-bottom: 0; }
+.book h2 { font-size: 20px; line-height: 1.4; margin: 0 0 4px; }
 .book .meta { font-size: 14px; color: var(--muted); }
-.book .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.book .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 12px; }
+.book .acts .primary { margin-right: 8px; }
+.book .acts button:not(.primary) { border-color: transparent; padding: 6px 8px; color: var(--muted); }
+.book .acts button:not(.primary):hover { color: var(--fg); }
+.book .acts button.danger { margin-left: auto; color: var(--danger); }
 .empty { color: var(--muted); line-height: 1.9; }
 .empty.pad { padding: 8px 16px; margin: 0; }
-/* 下載狀態：左側色條區分狀態，下載中附進度條 */
-.dl { margin-top: 8px; padding: 6px 10px; border-left: 3px solid var(--muted); font-size: 14px; display: flex; flex-direction: column; gap: 6px; }
-.dl-running { border-left-color: var(--accent); }
-.dl-done { border-left-color: #4caf50; }
-.dl-stale, .dl-error { border-left-color: #d9534f; }
+/* 下載狀態：文字本身說明狀態，異常才上色，下載中附進度條 */
+.dl { margin-top: 8px; font-size: 14px; display: flex; flex-direction: column; gap: 6px; color: var(--muted); }
+.dl-running { color: var(--fg); }
+.dl-stale, .dl-error { color: var(--danger); }
 .dl .bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
 .dl .bar i { display: block; height: 100%; background: var(--accent); }
-.run { padding: 10px 16px; border-left: 3px solid var(--muted); margin: 0 0 2px; font-size: 14px; }
-.run.dl-running { border-left-color: var(--accent); }
-.run.dl-done { border-left-color: #4caf50; }
-.run.dl-stale, .run.dl-error { border-left-color: #d9534f; }
+.run { padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 14px; }
 #login { max-width: 28em; margin: 15vh auto; padding: 16px; }
 #login input { width: 100%; font: inherit; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: inherit; margin: 12px 0; }
 
@@ -292,7 +293,7 @@ function bookCard(b) {
     var log = el('button', '', '下載紀錄');
     log.onclick = function() { openRuns(b); };
     acts.appendChild(log);
-    var del = el('button', '', '刪除');
+    var del = el('button', 'danger', '刪除');
     del.onclick = function() {
         if (!confirm('刪除《' + b.title + '》？已下載的章節與閱讀進度都會刪掉（不影響原網站）。')) return;
         api('DELETE', bookPath(b.id)).then(openShelf).catch(function(e) { toast('刪除失敗：' + e.message); });
