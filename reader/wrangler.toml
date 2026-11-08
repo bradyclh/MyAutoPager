@@ -13,4 +13,4 @@ fallthrough = true
 binding = "DB"
 database_name = "myautopager"
 # `npx wrangler d1 create myautopager` 後把輸出的 database_id 填到這裡
-database_id = "REPLACE_WITH_DATABASE_ID"
+database_id = "e6767009-feae-4179-8801-3895eb6c15b2"
