@@ -3,6 +3,8 @@
 // 所有 /api/* 都要 Authorization: Bearer <TOKEN>（wrangler secret put TOKEN）。
 // 這個檔案不 import 任何 Worker 專屬模組，node 測試可以直接載入（見 test/api.test.mjs）。
 
+import qrcode from 'qrcode-generator';
+
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' };
 const CORS_HEADERS = {
     'access-control-allow-origin': '*',
@@ -42,6 +44,17 @@ async function readJson(request) {
 function str(v, name, max = 2048) {
     if (typeof v !== 'string' || !v || v.length > max) throw new HttpError(400, name + ' 缺少或過長');
     return v;
+}
+
+// ---- 配對新裝置 ----
+// 配對網址把 TOKEN 放在 # 之後：瀏覽器不會把 # 後面送到伺服器，閱讀器讀到後存起來並立刻從網址列抹掉。
+// QR code 在這裡產生（呼叫端已用同一個 TOKEN 驗證過），閱讀器頁面不必載入任何程式庫
+function pairLink(url, env) {
+    const link = url.origin + '/#t=' + encodeURIComponent(env.TOKEN);
+    const qr = qrcode(0, 'M');
+    qr.addData(link, 'Byte');
+    qr.make();
+    return json({ url: link, svg: qr.createSvgTag({ cellSize: 6, margin: 4, scalable: true }) });
 }
 
 // ---- books ----
@@ -283,6 +296,7 @@ async function route(request, env) {
     const m = request.method;
     // parts[0] === 'api'
     if (parts[1] === 'ping' && parts.length === 2) return json({ ok: true });
+    if (parts[1] === 'pair' && parts.length === 2 && request.method === 'GET') return pairLink(url, env);
     if (parts[1] !== 'books') throw new HttpError(404, '未知的 API');
     if (parts.length === 2 && m === 'GET') return listBooks(env);
     const id = parts[2];

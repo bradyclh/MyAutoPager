@@ -68,6 +68,14 @@ await test('OPTIONS 預檢不需要 token', async () => {
     eq(res.status, 204);
 });
 
+await test('配對連結：要 TOKEN；TOKEN 放在 # 之後，附 QR code SVG', async () => {
+    eq((await call('GET', '/api/pair', undefined, 'wrong')).status, 401);
+    const r = await call('GET', '/api/pair');
+    eq(r.data.url, 'https://r.example/#t=secret-token');
+    if (!/^<svg[\s\S]*<\/svg>$/.test(r.data.svg.trim())) throw new Error('svg 格式不對：' + r.data.svg.slice(0, 60));
+    if (/<script|on\w+=/i.test(r.data.svg)) throw new Error('svg 不該含有 script 或事件屬性');
+});
+
 await test('上傳章節前必須先建立書本', async () => {
     eq((await call('POST', '/api/books/' + BOOK + '/chapters', { chapters: [ch(1)] })).status, 404);
 });

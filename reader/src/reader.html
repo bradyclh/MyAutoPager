@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
+<!-- 讓 MyAutoPager userscript 認得這是閱讀器：登入後自動把網址與 TOKEN 存進腳本的下載設定 -->
+<meta name="myautopager-reader" content="1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="書架">
 <title>MyAutoPager 書架</title>
@@ -69,6 +71,13 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 #aa .sw { width: 40px; height: 40px; border-radius: 50%; padding: 0; }
 #aa .sw.cur, #aa button.cur { outline: 2px solid var(--accent); outline-offset: 2px; }
 #fsVal, #spVal { min-width: 3em; text-align: center; font-variant-numeric: tabular-nums; }
+.pair { padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 10px; font-size: 14px; }
+/* QR code 一律白底黑點，夜間主題也要掃得到 */
+.pair .qr { width: min(240px, 100%); margin: 0 auto; background: #fff; border-radius: 8px; padding: 4px; }
+.pair .qr svg { display: block; width: 100%; height: auto; }
+.pair .link { display: flex; gap: 8px; }
+.pair input { flex: 1; min-width: 0; font: 13px ui-monospace, Menlo, monospace; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: inherit; }
+.pair .warn { color: var(--muted); line-height: 1.6; }
 
 /* ---- 提示 ---- */
 #toast { position: fixed; z-index: 30; left: 50%; bottom: max(16px, env(safe-area-inset-bottom)); transform: translateX(-50%); max-width: calc(100vw - 32px); background: rgba(20,20,20,.92); color: #fff; border-radius: 12px; padding: 10px 14px; font-size: 14px; display: flex; gap: 10px; align-items: center; box-shadow: 0 2px 10px rgba(0,0,0,.3); }
@@ -112,6 +121,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
         </div>
         <div class="row"><span>自動捲動</span><button data-sp="-10">慢</button><span id="spVal"></span><button data-sp="10">快</button></div>
         <div class="row empty" style="font-size:14px">正文上快速點兩下：開始／停止自動捲動。<br>鍵盤 ← →：上一章／下一章。</div>
+        <div class="row"><span>連結新裝置</span><button id="pairBtn">📱 顯示 QR code</button></div>
+        <div id="pairBox" class="pair hidden"></div>
         <div class="row"><span>這台裝置的名稱</span><button id="devName"></button></div>
         <div class="row"><button id="logout">登出這台裝置</button></div>
     </div>
@@ -131,10 +142,12 @@ var LS = {
     del: function(k) { try { localStorage.removeItem('apr_' + k); } catch (e) {} }
 };
 
-// userscript「開啟閱讀器」會帶 #t=<token>：存起來後立刻從網址列抹掉
+// userscript「開啟閱讀器」與配對 QR code 會帶 #t=<token>：存起來後立刻從網址列抹掉
+var pairedNow = false;
 (function() {
     var m = /[#&]t=([^&]+)/.exec(location.hash);
     if (m) {
+        pairedNow = LS.get('token', '') !== decodeURIComponent(m[1]);
         LS.set('token', decodeURIComponent(m[1]));
         var rest = location.hash.replace(/[#&]t=[^&]+/, '').replace(/^#&?/, '');
         history.replaceState(null, '', location.pathname + location.search + (rest ? '#' + rest : ''));
@@ -635,6 +648,8 @@ $('aa').addEventListener('click', function(e) {
         var n = prompt('這台裝置的名稱（同步提示會顯示「某某裝置讀到…」）', cfg.device);
         if (n && n.trim()) { cfg.device = n.trim().slice(0, 32); LS.set('device', cfg.device); }
     }
+    else if (b.id === 'pairBtn') { togglePair(); return; }
+    else if (b.id === 'pairCopy') { copyPair(); return; }
     else if (b.id === 'logout') { if (confirm('登出後要重新輸入 TOKEN。')) { LS.del('token'); cfg.token = ''; showLogin(); } return; }
     else return;
     applyLook();
@@ -647,6 +662,42 @@ $('tokenSave').onclick = function() {
 };
 $('tokenInput').addEventListener('keydown', function(e) { if (e.key === 'Enter') $('tokenSave').click(); });
 
+// ========== 連結新裝置 ==========
+// QR code 由 Worker 產生（GET /api/pair），內容是帶 TOKEN 的閱讀器網址。
+// 新裝置掃描後閱讀器自動登入；若那台裝置裝了 MyAutoPager 腳本，下載設定也會一併完成
+function togglePair() {
+    var box = $('pairBox');
+    if (!box.classList.contains('hidden')) { box.classList.add('hidden'); box.textContent = ''; $('pairBtn').textContent = '📱 顯示 QR code'; return; }
+    box.classList.remove('hidden');
+    box.textContent = '產生中…';
+    $('pairBtn').textContent = '隱藏';
+    api('GET', '/pair').then(function(d) {
+        box.textContent = '';
+        var qr = el('div', 'qr');
+        // SVG 來自自己的 Worker（qrcode-generator 產生），用 DOMParser 解析後只取 <svg> 元素
+        var svg = new DOMParser().parseFromString(d.svg, 'image/svg+xml').documentElement;
+        if (svg && svg.nodeName.toLowerCase() === 'svg') qr.appendChild(document.importNode(svg, true));
+        box.appendChild(qr);
+        var link = el('div', 'link');
+        var input = el('input');
+        input.id = 'pairLink'; input.readOnly = true; input.value = d.url; input.setAttribute('aria-label', '配對連結');
+        var copy = el('button', '', '複製');
+        copy.id = 'pairCopy';
+        link.appendChild(input); link.appendChild(copy);
+        box.appendChild(link);
+        box.appendChild(el('div', 'warn', '用新裝置的相機掃描，或把連結傳過去打開：閱讀器會自動登入；裝了 MyAutoPager 腳本的話，下載設定也一併完成。這個 QR code 和連結等同密碼，別讓別人看到。'));
+    }).catch(function(e) { box.textContent = '產生失敗：' + e.message; });
+}
+
+function copyPair() {
+    var input = $('pairLink');
+    if (!input) return;
+    var done = function() { toast('已複製配對連結'); };
+    try {
+        navigator.clipboard.writeText(input.value).then(done, function() { input.select(); toast('請按 ⌘C／長按複製'); });
+    } catch (e) { input.select(); toast('請按 ⌘C／長按複製'); }
+}
+
 // #b=<書本 id> 直接開書（userscript 下載完的「開啟閱讀器」會帶上）
 function route() {
     if (!cfg.token) return showLogin();
@@ -657,6 +708,7 @@ function route() {
 
 applyLook();
 route();
+if (pairedNow) toast('這台裝置已登入書架', null, 4000);
 })();
 </script>
 </body>
