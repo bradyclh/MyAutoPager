@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.2.28
+// @version      1.2.29
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -726,8 +726,8 @@
                 host: '/(^|\\.)oop\\.tw$/',
                 url: "/^\\/areada\\/[^\\/]+\\/a\\d+(_\\d+)?a\\.html/",
                 // 首頁正文中夾的廣告版位（插入的頁面由 cleanContent 清掉）；
-                // 首頁 h1 靠 .chapter-header 置中，插入的 h1 不在其內，故統一指定置中
-                style: '#article .mid-content-ad, #article [id^="onead"], #article ins, #article iframe, .ss-vip-ad {display: none !important;} h1.chapter-title {text-align: center !important;}',
+                // 首頁 h1 靠 .chapter-header 置中，插入的 h1 不在其內，故統一指定置中；正文也水平置中
+                style: '#article .mid-content-ad, #article [id^="onead"], #article ins, #article iframe, .ss-vip-ad {display: none !important;} h1.chapter-title, #article, #article * {text-align: center !important;}',
                 history: true, retry: 3000, popupBlock: true,
                 // 正文一句一個 <p>，keepText 防推廣關鍵字誤刪
                 cleanOpts: { keepText: '#article' },
