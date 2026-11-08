@@ -69,8 +69,11 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 #tocList a { display: block; padding: 9px 16px; color: inherit; text-decoration: none; font-size: 15px; border-left: 3px solid transparent; }
 #tocList a.cur { border-left-color: var(--accent); color: var(--accent); }
 #tocList a:hover { background: var(--line); }
-#aa .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 16px; }
-#aa .sw { width: 40px; height: 40px; border-radius: 50%; padding: 0; }
+#aa .row { display: flex; align-items: center; gap: 8px; padding: 8px 16px; }
+#aa .row > span:first-child { flex: 1; }
+#aa .group { font-size: 14px; color: var(--muted); padding: 16px 16px 4px; margin-top: 8px; border-top: 1px solid var(--line); }
+#aa .sw { width: 44px; height: 44px; border-radius: 50%; padding: 0; border-color: rgba(128,128,128,.5); }
+#aa button.danger { color: var(--danger); }
 #aa .sw.cur, #aa button.cur { outline: 2px solid var(--accent); outline-offset: 2px; }
 #fsVal, #spVal { min-width: 3em; text-align: center; font-variant-numeric: tabular-nums; }
 .pair { padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 10px; font-size: 14px; }
@@ -123,10 +126,11 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
         </div>
         <div class="row"><span>自動捲動</span><button data-sp="-10">慢</button><span id="spVal"></span><button data-sp="10">快</button></div>
         <div class="row empty" style="font-size:14px">正文上快速點兩下：開始／停止自動捲動。<br>鍵盤 ← →：上一章／下一章。</div>
-        <div class="row"><span>連結新裝置</span><button id="pairBtn">📱 顯示 QR code</button></div>
+        <div class="group">這台裝置</div>
+        <div class="row"><span>連結新裝置</span><button id="pairBtn">顯示 QR code</button></div>
         <div id="pairBox" class="pair hidden"></div>
-        <div class="row"><span>這台裝置的名稱</span><button id="devName"></button></div>
-        <div class="row"><button id="logout">登出這台裝置</button></div>
+        <div class="row"><span>裝置名稱</span><button id="devName"></button></div>
+        <div class="row"><button id="logout" class="danger">登出這台裝置</button></div>
     </div>
 </div>
 
