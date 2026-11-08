@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.4.4
+// @version      1.4.5
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -39,6 +39,8 @@
 // @match        *://*.twkan.com/*
 // @match        *://novels.com.tw/*
 // @match        *://*.novels.com.tw/*
+// @match        *://oop.tw/*
+// @match        *://*.oop.tw/*
 // @noframes
 // ==/UserScript==
 
@@ -944,6 +946,25 @@
                 // beforePage 在 cleanContent 之前執行，裝著密文的 <script> 此時還在
                 novelsTwDecrypt(pageE);
             }
+        },
+        oop: {
+            // oop.tw（短篇小說）：一章拆成多頁（a22487a.html → a22487_2a.html），
+            // 章內「下一頁」與跨章「下一章」都是 #next_url
+            host: 'oop.tw',
+            url: /^\/areada\/[^\/]+\/a\d+(_\d+)?a\.html/,
+            // 首頁正文中夾的廣告版位（插入的頁面由 cleanContent 清掉）；
+            // 首頁 h1 靠 .chapter-header 置中，插入的 h1 不在其內，故統一指定置中
+            style: '#article .mid-content-ad, #article [id^="onead"], #article ins, #article iframe, .ss-vip-ad {display:none!important} h1.chapter-title {text-align:center!important}',
+            pager: {
+                // 末章末頁的「沒有了」指回書頁（/ 結尾），[href$=".html"] 排除之 → nextL 落空即乾淨停止
+                nextL: 'a#next_url[href$=".html"]',
+                // h1 只有章號（同章各頁相同），「第N章 標題」在 #article 第一段
+                pageE: 'h1.chapter-title, #article',
+                replaceE: '.reading-nav',
+                scrollD: 2000
+            },
+            // 正文一句一個 <p>，keepText 防推廣關鍵字誤刪
+            cleanOpts: { keepText: '#article' }
         }
         // thepaperbooks（8book 系小說站）：真實內文由站方混淆 script 在瀏覽器
         // 渲染（伺服器對非瀏覽器請求偽裝成關鍵字農場頁），需要 iframe 擷取
