@@ -617,10 +617,12 @@ var lastTap = 0, lastTapX = 0, lastTapY = 0;
 $('reader').addEventListener('click', function(e) {
     if (e.target.closest('button, a')) return;
     var sel = window.getSelection && window.getSelection();
-    if (sel && !sel.isCollapsed) return;
+    // 滑鼠雙擊時瀏覽器會自動選取一個字詞（detail === 2），那不是使用者在選字
+    if (sel && !sel.isCollapsed && e.detail !== 2) return;
     var now = Date.now();
     if (now - lastTap < 350 && Math.abs(e.clientX - lastTapX) < 20 && Math.abs(e.clientY - lastTapY) < 20) {
         lastTap = 0;
+        if (sel && e.detail === 2) sel.removeAllRanges();
         asOn ? asStop() : asStart();
         return;
     }
