@@ -34,6 +34,18 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .book .meta { font-size: 14px; color: var(--muted); }
 .book .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .empty { color: var(--muted); line-height: 1.9; }
+.empty.pad { padding: 8px 16px; margin: 0; }
+/* 下載狀態：左側色條區分狀態，下載中附進度條 */
+.dl { margin-top: 8px; padding: 6px 10px; border-left: 3px solid var(--muted); font-size: 14px; display: flex; flex-direction: column; gap: 6px; }
+.dl-running { border-left-color: var(--accent); }
+.dl-done { border-left-color: #4caf50; }
+.dl-stale, .dl-error { border-left-color: #d9534f; }
+.dl .bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.dl .bar i { display: block; height: 100%; background: var(--accent); }
+.run { padding: 10px 16px; border-left: 3px solid var(--muted); margin: 0 0 2px; font-size: 14px; }
+.run.dl-running { border-left-color: var(--accent); }
+.run.dl-done { border-left-color: #4caf50; }
+.run.dl-stale, .run.dl-error { border-left-color: #d9534f; }
 #login { max-width: 28em; margin: 15vh auto; padding: 16px; }
 #login input { width: 100%; font: inherit; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: inherit; margin: 12px 0; }
 
@@ -252,8 +264,9 @@ function bookCard(b) {
     card.appendChild(el('div', 'meta', where));
     var sub = [];
     if (b.progress_at) sub.push(ago(b.progress_at) + (b.progress_device ? '在 ' + b.progress_device : ''));
-    if (b.next_url) sub.push('還有章節未下載');
     if (sub.length) card.appendChild(el('div', 'meta', sub.join(' · ')));
+    var dl = dlLine(b);
+    if (dl) card.appendChild(dl);
     var acts = el('div', 'acts');
     var go = el('button', 'primary', b.progress_idx != null ? '繼續閱讀' : '開始閱讀');
     go.onclick = function() { openBook(b.id); };
@@ -263,6 +276,9 @@ function bookCard(b) {
         src.onclick = function() { window.open(b.source_url, '_blank', 'noopener'); };
         acts.appendChild(src);
     }
+    var log = el('button', '', '下載紀錄');
+    log.onclick = function() { openRuns(b); };
+    acts.appendChild(log);
     var del = el('button', '', '刪除');
     del.onclick = function() {
         if (!confirm('刪除《' + b.title + '》？已下載的章節與閱讀進度都會刪掉（不影響原網站）。')) return;
@@ -272,6 +288,81 @@ function bookCard(b) {
     card.appendChild(acts);
     return card;
 }
+
+// ========== 下載狀態與紀錄 ==========
+// userscript 下載中約每 15 秒回報一次；超過 2 分鐘沒回報，多半是分頁關了或被瀏覽器暫停
+var RUN_STALE_MS = 120000;
+var MODE_NAME = { here: '從本章開始', all: '整本', resume: '續抓新章節' };
+
+function runState(r) {
+    if (r.state === 'running' && Date.now() - r.updated_at > RUN_STALE_MS) return 'stale';
+    return r.state;
+}
+
+function runText(r, st) {
+    var n = r.chapters, est = r.est;
+    if (st === 'running') return '下載中 ' + n + (est ? ' / 約 ' + est : '') + ' 章';
+    if (st === 'stale') return '下載沒有回應（' + n + ' 章後），小說站的分頁可能關了或被暫停';
+    if (st === 'done') return '下載完成，新增 ' + n + ' 章';
+    if (st === 'stopped') return '下載已停止，存了 ' + n + ' 章';
+    return '下載中斷，存了 ' + n + ' 章';
+}
+
+function dlLine(b) {
+    if (!b.dl_state) return b.next_url ? el('div', 'meta', '還有章節未下載') : null;
+    var r = { state: b.dl_state, chapters: b.dl_chapters, est: b.dl_est, updated_at: b.dl_at };
+    var st = runState(r);
+    var box = el('div', 'dl dl-' + st);
+    var line = runText(r, st);
+    var who = [b.dl_device, ago(b.dl_at)].filter(Boolean).join('，');
+    box.appendChild(el('div', '', line + (who ? '（' + who + '）' : '')));
+    if (st === 'running' && r.est) {
+        var bar = el('div', 'bar');
+        var fill = el('i');
+        fill.style.width = Math.min(100, Math.round(r.chapters / r.est * 100)) + '%';
+        bar.appendChild(fill);
+        box.appendChild(bar);
+    }
+    if ((st === 'error' || st === 'stopped') && b.dl_message) box.appendChild(el('div', 'meta', b.dl_message));
+    return box;
+}
+
+function fmtTime(ts) {
+    var d = new Date(ts), p = function(n) { return (n < 10 ? '0' : '') + n; };
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+function openRuns(b) {
+    var list = $('tocList');
+    list.textContent = '';
+    $('tocTitle').textContent = '《' + b.title + '》下載紀錄';
+    $('toc').classList.remove('hidden');
+    var loading = el('p', 'empty pad', '載入中…');
+    list.appendChild(loading);
+    api('GET', bookPath(b.id) + '/runs').then(function(d) {
+        loading.remove();
+        if (!d.runs.length) { list.appendChild(el('p', 'empty pad', '還沒有下載紀錄。')); return; }
+        d.runs.forEach(function(r) {
+            var st = runState(r);
+            var row = el('div', 'run dl-' + st);
+            var mins = Math.max(1, Math.round((r.updated_at - r.started_at) / 60000));
+            row.appendChild(el('strong', '', runText(r, st)));
+            row.appendChild(el('div', 'meta', fmtTime(r.started_at) + ' · ' + (MODE_NAME[r.mode] || '下載') +
+                (r.device ? ' · ' + r.device : '') + ' · ' + mins + ' 分鐘'));
+            if (r.message) row.appendChild(el('div', 'meta', r.message));
+            list.appendChild(row);
+        });
+    }).catch(function(e) { loading.textContent = '載入失敗：' + e.message; });
+}
+
+// 書架上有書正在下載時，每 20 秒更新一次進度
+setInterval(function() {
+    if (view !== 'shelf' || document.visibilityState !== 'visible' || !$('toc').classList.contains('hidden')) return;
+    if (!document.querySelector('#shelf .dl-running')) return;
+    var y = window.scrollY;
+    openShelf();
+    setTimeout(function() { window.scrollTo(0, y); }, 300);
+}, 20000);
 
 // ========== 閱讀 ==========
 // book：{id, title, chapters:[{idx,title,url}]}；畫面上是連續的幾章，捲到底自動接下一章

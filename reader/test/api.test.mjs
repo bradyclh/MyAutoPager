@@ -134,6 +134,25 @@ await test('格式錯誤與越界都回 4xx 而不是 500', async () => {
     eq((await call('GET', '/api/nope')).status, 404);
 });
 
+await test('下載紀錄：開始、回報、書架顯示最新一筆', async () => {
+    let r = await call('POST', '/api/books/' + BOOK + '/runs', { mode: 'all', device: '電腦', est: 350 });
+    eq([r.status, r.data.run.state, r.data.run.est], [200, 'running', 350]);
+    const rid = r.data.run.id;
+    r = await call('PUT', '/api/books/' + BOOK + '/runs/' + rid, { state: 'running', chapters: 120, est: 350 });
+    eq([r.data.run.chapters, r.data.run.state], [120, 'running']);
+    const b = (await call('GET', '/api/books')).data.books[0];
+    eq([b.dl_state, b.dl_chapters, b.dl_est, b.dl_device], ['running', 120, 350, '電腦']);
+});
+
+await test('下載紀錄：上一筆還掛著 running 時，新的一筆把它標成中斷', async () => {
+    await call('POST', '/api/books/' + BOOK + '/runs', { mode: 'resume', device: 'iPhone' });
+    const runs = (await call('GET', '/api/books/' + BOOK + '/runs')).data.runs;
+    eq(runs.map((x) => [x.mode, x.state]), [['resume', 'running'], ['all', 'stopped']]);
+    eq(runs[1].message, '分頁關閉或中斷');
+    eq((await call('PUT', '/api/books/' + BOOK + '/runs/99999', { state: 'done' })).status, 404);
+    eq((await call('POST', '/api/books/' + encodeURIComponent('nope/') + '/runs', {})).status, 404);
+});
+
 await test('刪除書本連同章節與進度', async () => {
     eq((await call('DELETE', '/api/books/' + BOOK)).status, 200);
     eq((await call('GET', '/api/books')).data.books.length, 0);

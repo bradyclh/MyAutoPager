@@ -26,6 +26,22 @@ CREATE TABLE IF NOT EXISTS chapters (
 );
 CREATE INDEX IF NOT EXISTS chapters_order ON chapters (book_id, idx);
 
+-- 下載紀錄：每按一次下載就一筆，userscript 下載中定期回報。
+-- 書架靠它顯示「下載中 120 / 約 350 章（電腦，1 分鐘前）」，別台裝置也看得到
+CREATE TABLE IF NOT EXISTS download_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id     TEXT NOT NULL,
+    mode        TEXT,                      -- here／all／resume
+    device      TEXT,
+    state       TEXT NOT NULL,             -- running／done／stopped／error
+    chapters    INTEGER NOT NULL DEFAULT 0,
+    est         INTEGER NOT NULL DEFAULT 0,-- 估計總章數（0 = 不知道）
+    message     TEXT,
+    started_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS download_runs_book ON download_runs (book_id, id);
+
 CREATE TABLE IF NOT EXISTS progress (
     book_id      TEXT PRIMARY KEY,
     chapter_url  TEXT NOT NULL,

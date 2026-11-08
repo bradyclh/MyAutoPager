@@ -2876,14 +2876,53 @@
     // static.test.js 會檢查兩個腳本中 dl-shared-begin～end 之間逐字相同；
     // 平台差異（儲存、跨域請求、開分頁、站方 hook）一律透過 dlEnv，由各版本在這段之前定義。
     var DL_KEY_SERVER = 'apdl_server', DL_KEY_TOKEN = 'apdl_token';
-    var DL_PAGE_DELAY = 700;                     // 每頁間隔，別把站方打爆
+    // 節奏：基準間隔 × 隨機 0.8–1.7 × 減速倍率。被限流（403／429／503）時倍率翻倍、最高 8 倍，
+    // 之後每順利抓一頁回落 10%；每 40 頁長休息一次。固定間隔太像機器人，也不給站方喘息
+    var DL_PAGE_DELAY = 900, DL_SLOW_MAX = 8, DL_REST_EVERY = 40, DL_REST_MS = [15000, 30000];
     var DL_BATCH_MAX = 20, DL_BATCH_CHARS = 300000;
     var DL_RETRY_WAIT = [2000, 5000, 12000];     // 抓頁／上傳失敗的重試間隔
     // 下載中呼叫站方 hook 時為 true：hook 不可改動畫面上的 DOM（oopFix 的同章續頁合併就會）
     var dlHookMode = false;
     var dlJob = null, dlUi = null;
 
-    function dlSleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
+    // 背景分頁的計時器會被瀏覽器節流（Chrome 分頁隱藏 5 分鐘後，連鎖的 setTimeout 約一分鐘才醒一次），
+    // 下載就會慢到一分鐘一頁。Dedicated Worker 裡的計時器不受這個限制，所以優先用它計時；
+    // 一般的 setTimeout 同時掛著當保底 —— 站方 CSP 擋掉 blob Worker 時照樣會醒（只是在背景會變慢）
+    var dlTimer = null, dlTimerSeq = 0, dlTimerCbs = {};
+    function dlTimerWorker() {
+        if (dlTimer !== null) return dlTimer;
+        dlTimer = false;
+        try {
+            var src = 'onmessage=function(e){setTimeout(function(){postMessage(e.data.id)},e.data.ms)}';
+            var w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+            w.onmessage = function(e) { var f = dlTimerCbs[e.data]; delete dlTimerCbs[e.data]; if (f) f(); };
+            w.onerror = function() { dlTimer = false; };
+            dlTimer = w;
+        } catch (e) {}
+        return dlTimer;
+    }
+    function dlSleep(ms) {
+        return new Promise(function(resolve) {
+            var done = false, fin = function() { if (!done) { done = true; resolve(); } };
+            setTimeout(fin, ms);
+            var w = dlTimerWorker();
+            if (w) {
+                var id = ++dlTimerSeq;
+                dlTimerCbs[id] = fin;
+                try { w.postMessage({ id: id, ms: ms }); } catch (e) { delete dlTimerCbs[id]; }
+            }
+        });
+    }
+
+    function dlPace(job) {
+        var ms = DL_PAGE_DELAY * (0.8 + Math.random() * 0.9) * (job.slow || 1);
+        if (job.pages && job.pages % DL_REST_EVERY === 0) {
+            var rest = DL_REST_MS[0] + Math.random() * (DL_REST_MS[1] - DL_REST_MS[0]);
+            ms += rest;
+            dlStatus('已抓 ' + job.pages + ' 頁，休息 ' + Math.round(rest / 1000) + ' 秒，避免被站方限流…');
+        }
+        return dlSleep(ms);
+    }
 
     function dlAbsUrl(href, base) {
         if (!href) return '';
@@ -3038,20 +3077,41 @@
     }
 
     // ---- 網路 ----
+    // 站方的人機驗證頁（Cloudflare 等）。只在「HTTP 錯誤」或「找不到正文」時才拿來判斷，
+    // 正常章節頁裡就算有 captcha 字樣也不會誤判。碰到就停，請使用者自己在分頁裡完成驗證
+    var DL_CHALLENGE_RE = /cf-chl|challenge-platform|cf_chl_opt|Just a moment|Attention Required|請稍候|verify you are human|captcha|turnstile/i;
+    function dlChallengeError() {
+        var e = new Error('站方要求人機驗證');
+        e.challenge = true;
+        return e;
+    }
+    function dlHttpError(status, retryAfter, body) {
+        if (body && DL_CHALLENGE_RE.test(body.slice(0, 20000))) return dlChallengeError();
+        var e = new Error('HTTP ' + status);
+        e.status = status;
+        var ra = parseInt(retryAfter, 10);
+        if (ra > 0) e.retryAfter = Math.min(ra, 600) * 1000;
+        return e;
+    }
+
     function dlFetchHtml(url) {
         var same = false;
         try { same = new URL(url).origin === location.origin; } catch (e) {}
         // 同源走原生 fetch：帶得到站方用 JS 設的第一方 cookie（見 fetchNextPage 的說明）
         if (same) {
             return fetch(url, { credentials: 'include', headers: { 'Accept': 'text/html,application/xhtml+xml' } }).then(function(res) {
-                if (!res.ok) { var e = new Error('HTTP ' + res.status); e.status = res.status; throw e; }
+                if (!res.ok) {
+                    return res.text().catch(function() { return ''; }).then(function(t) {
+                        throw dlHttpError(res.status, res.headers.get('retry-after'), t);
+                    });
+                }
                 return res.arrayBuffer();
             }).then(function(buf) {
                 return new TextDecoder(document.characterSet || 'utf-8').decode(buf);
             });
         }
         return dlEnv.xhr({ method: 'GET', url: url, html: true }).then(function(r) {
-            if (r.status && (r.status < 200 || r.status >= 400)) { var e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
+            if (r.status && (r.status < 200 || r.status >= 400)) throw dlHttpError(r.status, '', r.text);
             return r.text;
         });
     }
@@ -3080,9 +3140,12 @@
         for (var i = 0; ; i++) {
             try { return await fn(); }
             catch (e) {
-                if (i >= DL_RETRY_WAIT.length || (dlJob && dlJob.stop)) throw e;
-                // 403／429／503 多半是站方限流或 Cloudflare 盤查，等久一點
-                var wait = DL_RETRY_WAIT[i] * ((e.status === 403 || e.status === 429 || e.status === 503) ? 3 : 1);
+                // 人機驗證重試也沒用，只會讓站方更確定這是機器人
+                if (e.challenge || i >= DL_RETRY_WAIT.length || (dlJob && dlJob.stop)) throw e;
+                // 403／429／503 多半是站方限流：之後每頁都放慢，這次也等久一點；站方有給 Retry-After 就照它
+                var limited = e.status === 403 || e.status === 429 || e.status === 503;
+                if (limited && dlJob) dlJob.slow = Math.min(DL_SLOW_MAX, (dlJob.slow || 1) * 2);
+                var wait = e.retryAfter || DL_RETRY_WAIT[i] * (limited ? 3 : 1);
                 dlStatus(what + '失敗（' + (e.message || e) + '），' + Math.round(wait / 1000) + ' 秒後重試…');
                 await dlSleep(wait);
             }
@@ -3095,28 +3158,67 @@
         return { server: String(s || '').replace(/\/+$/, ''), token: String(t || '') };
     }
 
+    // ---- 下載紀錄（閱讀器書架顯示「下載中 120 / 約 350 章」） ----
+    // 回報失敗不影響下載：舊版伺服器沒有這支 API、或網路一時不通，都只是書架上看不到進度
+    var DL_REPORT_EVERY = 15000;
+    function dlDevice() {
+        var ua = navigator.userAgent;
+        if (/iPhone/.test(ua)) return 'iPhone';
+        if (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return 'iPad';
+        if (/Android/.test(ua)) return 'Android';
+        return '電腦';
+    }
+    function dlReport(cfg, bp, job, state, message) {
+        if (!job.runId) return Promise.resolve();
+        job.reportedAt = Date.now();
+        return dlApi(cfg, 'PUT', bp + '/runs/' + job.runId, {
+            state: state, chapters: job.chapters, est: job.est, message: message || null
+        }).catch(function() {});
+    }
+
     // ---- 下載流程 ----
     function dlEligible() {
         var r = dlEnv.rule();
         return !!(r && r.pager && typeof r.pager.nextL === 'string' && r.pager.pageE && dlEnv.eligible());
     }
 
-    // 整本：到目錄頁挑「開始閱讀／第一章」連結，沒有就挑網址形狀與本章相同、序號最小的那個
-    async function dlFirstChapter(tocUrl) {
-        if (!tocUrl) throw new Error('這頁找不到「目錄」連結，請到第一章再按「從本章開始」');
+    // 讀目錄頁：網址形狀與本章相同的連結就是章節（依序號排序，用來估算總章數），
+    // 第一章優先取「開始閱讀／第一章」連結，沒有就取序號最小的那個
+    async function dlTocInfo(tocUrl) {
         var doc = dlParseDoc(await dlRetry(function() { return dlFetchHtml(tocUrl); }, '讀取目錄'));
         var shape = dlShape(location.href), host = location.hostname;
-        var as = doc.querySelectorAll('a[href]'), best = '', bestN = Infinity;
+        var as = doc.querySelectorAll('a[href]'), seen = {}, list = [], first = '';
         for (var i = 0; i < as.length; i++) {
             var u = dlAbsUrl(as[i].getAttribute('href'), tocUrl);
             if (!u || new URL(u).hostname !== host || dlShape(u) !== shape) continue;
             var t = as[i].textContent.replace(/\s+/g, '');
-            if (/^(開始閱讀|从头阅读|從頭閱讀|開始閲讀|第[一1０0]+章|第0*1章)/.test(t)) return u;
-            var n = dlLastNum(u);
-            if (n < bestN) { bestN = n; best = u; }
+            if (!first && /^(開始閱讀|从头阅读|從頭閱讀|開始閲讀|第[一1０0]+章|第0*1章)/.test(t)) first = u;
+            if (!seen[u]) { seen[u] = true; list.push(u); }
         }
-        if (!best) throw new Error('目錄頁裡找不到章節連結，請到第一章再按「從本章開始」');
-        return best;
+        list.sort(function(a, b) { return dlLastNum(a) - dlLastNum(b); });
+        return { first: first || list[0] || '', list: list };
+    }
+
+    // 估計還有幾章：本章在目錄清單中的位置之後還剩多少（目錄分頁時只是下限，所以標「約」）
+    function dlEstimate(toc, fromUrl) {
+        if (!toc || !toc.list.length) return 0;
+        var i = toc.list.indexOf(fromUrl);
+        return i >= 0 ? toc.list.length - i : 0;
+    }
+
+    function dlProgressText(job, title) {
+        var t = '已抓 ' + job.chapters + ' 章';
+        if (job.est) {
+            t += ' / 約 ' + job.est + ' 章';
+            var left = job.est - job.chapters;
+            if (job.chapters >= 3 && left > 0) {
+                var per = (Date.now() - job.t0) / job.chapters;
+                var min = Math.ceil(per * left / 60000);
+                t += '，約剩 ' + (min >= 60 ? Math.floor(min / 60) + ' 小時 ' + (min % 60) + ' 分' : min + ' 分鐘');
+            }
+        }
+        if (job.slow > 1.05) t += '（站方限流中，已放慢 ' + job.slow.toFixed(1) + ' 倍）';
+        return t + (title ? '：' + title : '');
     }
 
     // mode：'here' 從本章、'all' 整本、'resume' 從上次結尾續抓新章節
@@ -3126,7 +3228,8 @@
         if (!cfg.server || !cfg.token) { dlShowSettings(true); dlStatus('請先設定閱讀器網址與 TOKEN'); return; }
         var title = (dlUi && dlUi.q('#dlTitle').value.trim()) || dlGuessTitle(document);
         if (!title) { dlStatus('請輸入書名'); return; }
-        var job = dlJob = { stop: false, chapters: 0, pages: 0 };
+        var job = dlJob = { stop: false, chapters: 0, pages: 0, slow: 1, t0: Date.now(), est: 0 };
+        window.addEventListener('beforeunload', dlBeforeUnload);
         dlRender();
         try {
             var tocUrl = dlFindToc(document, location.href);
@@ -3149,8 +3252,12 @@
                 if (!info.book.next_url) throw new Error('上次已經抓到最後一章，沒有可續抓的位置');
                 url = info.book.next_url; skipFirst = !!info.book.next_skip;
             } else if (mode === 'all') {
+                if (!tocUrl) throw new Error('這頁找不到「目錄」連結，請到第一章再按「從本章開始」');
                 dlStatus('從目錄找第一章…');
-                url = await dlFirstChapter(tocUrl);
+                var tocAll = await dlTocInfo(tocUrl);
+                url = tocAll.first;
+                if (!url) throw new Error('目錄頁裡找不到章節連結，請到第一章再按「從本章開始」');
+                job.est = tocAll.list.length;
                 start = true; prevUrl = null;
             } else {
                 url = location.href;
@@ -3162,6 +3269,16 @@
                 }
                 if (!start) atTail = true;
             }
+            // 估算總章數只是錦上添花：目錄讀不到就不顯示，不影響下載
+            if (!job.est && tocUrl) {
+                try { job.est = dlEstimate(await dlTocInfo(tocUrl), url); } catch (e) {}
+            }
+
+            try {
+                var run = await dlApi(cfg, 'POST', bp + '/runs', { mode: mode, device: dlDevice(), est: job.est });
+                job.runId = run.run && run.run.id;
+                job.reportedAt = Date.now();
+            } catch (e) {}
 
             var visited = {}, batch = [], batchChars = 0, cur = null, jumped = false, ended = false;
             var upload = async function(next) {
@@ -3201,14 +3318,24 @@
                 }
                 visited[url] = true;
                 var pageUrl = url;
-                var page = await dlRetry(function() {
-                    return dlFetchHtml(pageUrl).then(function(html) { return dlParsePage(dlParseDoc(html), pageUrl); }).then(function(p) {
-                        if (!p) { var e = new Error('頁面裡找不到正文'); throw e; }
-                        return p;
-                    });
-                }, '抓取');
+                var page;
+                try {
+                    page = await dlRetry(function() {
+                        return dlFetchHtml(pageUrl).then(function(html) {
+                            return dlParsePage(dlParseDoc(html), pageUrl).then(function(p) {
+                                if (p) return p;
+                                throw DL_CHALLENGE_RE.test(html.slice(0, 20000)) ? dlChallengeError() : new Error('頁面裡找不到正文');
+                            });
+                        });
+                    }, '抓取');
+                } catch (e) {
+                    // 抓頁失敗不直接丟出去：已抓的章節先上傳、記好續抓點，下次能從這裡接著抓
+                    job.error = e;
+                    break;
+                }
                 job.pages++;
-                if (skipFirst) { skipFirst = false; url = page.next; await dlSleep(DL_PAGE_DELAY); continue; }
+                job.slow = Math.max(1, job.slow * 0.9);
+                if (skipFirst) { skipFirst = false; url = page.next; await dlPace(job); continue; }
                 if (cur && page.key && page.key === cur.key) {
                     cur.lines = dlJoinLines(cur.lines, page.lines);
                     cur.lastUrl = pageUrl;
@@ -3216,33 +3343,55 @@
                     if (cur) finish(cur);
                     cur = { url: pageUrl, lastUrl: pageUrl, key: page.key, title: page.title, lines: page.lines };
                 }
-                dlStatus('已抓 ' + job.chapters + ' 章 · ' + job.pages + ' 頁：' + page.title);
+                dlStatus(dlProgressText(job, page.title));
+                if (Date.now() - (job.reportedAt || 0) > DL_REPORT_EVERY) dlReport(cfg, bp, job, 'running');
                 // 未完成的那章不上傳；續抓位置指向它的第一頁，下次從頭抓這章
                 if (batch.length >= DL_BATCH_MAX || batchChars >= DL_BATCH_CHARS) await upload({ url: cur.url, skip: false });
                 url = page.next;
-                if (url) await dlSleep(DL_PAGE_DELAY);
+                if (url) await dlPace(job);
             }
 
-            if (job.stop) {
+            if (job.stop || job.error) {
+                // 未完成的那章不存，續抓點指向它的第一頁（失敗在新的一章時，就是失敗的那一頁）
                 await upload({ url: cur ? cur.url : url, skip: false });
-                dlStatus('已停止。存了 ' + job.chapters + ' 章，' + (atTail ? '可用「續抓新章節」接著抓。' : '前段還沒補齊，之後再按「整本」即可（已存的會跳過）。'));
+                var again = atTail ? '「續抓新章節」' : '「整本」（已存的會跳過）';
+                var e2 = job.error;
+                job.endState = e2 ? 'error' : 'stopped';
+                job.endMsg = !e2 ? '已停止。存了 ' + job.chapters + ' 章，可用' + again + '接著抓。'
+                    : e2.challenge ? '站方要求人機驗證，已暫停並保存 ' + job.chapters + ' 章。請重新整理這一頁、自己完成驗證，再按' + again + '。'
+                    : '抓取失敗（' + (e2.message || e2) + '），已保存 ' + job.chapters + ' 章。稍後再按' + again + '。';
+                dlStatus(job.endMsg);
             } else if (ended) {
                 await upload();
-                dlStatus('完成：新增 ' + job.chapters + ' 章，全書共 ' + (job.total || stored) + ' 章。');
             } else {
                 if (cur) finish(cur);
                 // 抓到最後一頁：續抓時重新讀這頁找新的「下一章」，但不重存它
                 await upload({ url: cur ? cur.lastUrl : null, skip: true });
-                dlStatus('完成：新增 ' + job.chapters + ' 章，全書共 ' + (job.total || stored) + ' 章。');
+            }
+            if (!job.endState) {
+                job.endState = 'done';
+                job.endMsg = '完成：新增 ' + job.chapters + ' 章，全書共 ' + (job.total || stored) + ' 章。';
+                dlStatus(job.endMsg);
             }
             job.done = true;
         } catch (e) {
-            dlStatus('下載中斷：' + (e.message || e) + (job.chapters ? '（已存 ' + job.chapters + ' 章之前的部分）' : ''));
+            job.endState = 'error';
+            job.endMsg = '下載中斷：' + (e.message || e) + (job.chapters ? '（已存 ' + job.chapters + ' 章之前的部分）' : '');
+            dlStatus(job.endMsg);
         } finally {
+            if (job.runId) await dlReport(cfg, bp, job, job.endState || 'error', job.endMsg);
+            window.removeEventListener('beforeunload', dlBeforeUnload);
             dlJob = null;
             dlLastBookId = job.bookId || dlLastBookId;
             dlRender();
         }
+    }
+
+    // 下載中關掉或離開分頁會中斷下載：先跳瀏覽器的確認（iPhone Safari 不一定會跳）
+    function dlBeforeUnload(e) {
+        if (!dlJob) return;
+        e.preventDefault();
+        e.returnValue = '';
     }
 
     var dlLastBookId = '';
@@ -3255,7 +3404,9 @@
 
     // ---- 面板 ----
     function dlStatus(msg) {
-        if (dlUi) dlUi.q('#dlStatus').textContent = msg;
+        if (!dlUi) return;
+        dlUi.q('#dlStatus').textContent = msg;
+        if (dlJob) dlUi.q('#mini').textContent = '⬇ ' + dlJob.chapters + (dlJob.est ? ' / ' + dlJob.est : '') + ' 章' + (dlJob.slow > 1.05 ? ' · 放慢中' : '');
     }
 
     function dlRender() {
@@ -3264,6 +3415,8 @@
         ['#dlHere', '#dlAll', '#dlResume'].forEach(function(s) { dlUi.q(s).disabled = busy; });
         dlUi.q('#dlStop').style.display = busy ? '' : 'none';
         dlUi.q('#dlRead').textContent = dlLastBookId ? '📚 開啟這本' : '📚 開啟書架';
+        // 面板關著、下載還在跑：角落留一個進度小標籤，點它打開面板
+        dlUi.q('#mini').hidden = !(busy && dlUi.q('#p').hidden);
     }
 
     function dlShowSettings(open) {
@@ -3274,7 +3427,7 @@
 
     function dlOpenDialog() {
         if (!dlEligible()) { dlEnv.notice('這個網站的規則不支援下載'); return; }
-        if (dlUi) { dlUi.host.style.display = ''; return; }
+        if (dlUi) { dlUi.q('#p').hidden = false; dlRender(); return; }
         var host = document.createElement('div');
         host.id = 'Autopage_dl';
         host.style.cssText = 'all:initial;position:fixed!important;z-index:2147483000!important;left:0;top:0';
@@ -3292,14 +3445,19 @@
             '#dlStatus{margin-top:10px;min-height:1.5em;color:#ddd;word-break:break-all}' +
             '.hint{color:#999;font-size:12px;margin-top:8px}#x{background:none;min-height:0;padding:0 4px;font-size:20px}' +
             '#dlCfg{display:none;border-top:1px solid #444;margin-top:12px;padding-top:4px}' +
+            '[hidden]{display:none!important}' +
+            '#mini{position:fixed;right:calc(12px + env(safe-area-inset-right,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));' +
+                'padding:6px 12px;border-radius:999px;background:rgba(20,20,20,.9);color:#fff;font:13px/1.4 system-ui,-apple-system,sans-serif;' +
+                'cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35);-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
             '</style>' +
+            '<div id="mini" role="button" aria-label="下載進度，點一下打開面板" hidden></div>' +
             '<div id="p" role="dialog" aria-label="下載到閱讀器">' +
               '<h3><span>⬇ 下載到閱讀器</span><button id="x" aria-label="關閉">×</button></h3>' +
               '<label for="dlTitle">書名</label><input id="dlTitle">' +
               '<div class="row"><button id="dlHere" class="pri">從本章開始</button><button id="dlAll">整本（第一章起）</button></div>' +
               '<div class="row"><button id="dlResume">續抓新章節</button><button id="dlStop">停止</button></div>' +
               '<div id="dlStatus"></div>' +
-              '<div class="hint">下載中請讓這個分頁保持開啟（iPhone 請留在前景）。已存過的章節會自動跳過。</div>' +
+              '<div class="hint">下載在背景進行，可以關掉面板繼續閱讀，右下角會顯示進度。請讓這個分頁開著（iPhone 請留在前景，Safari 會暫停背景分頁）。已存過的章節會自動跳過。</div>' +
               '<div class="row"><button id="dlRead">📚 開啟書架</button><button id="dlSet">設定</button></div>' +
               '<div id="dlCfg">' +
                 '<label for="dlServer">閱讀器網址（Cloudflare Worker）</label><input id="dlServer" placeholder="https://myautopager-reader.xxx.workers.dev" autocomplete="off" autocapitalize="off">' +
@@ -3311,7 +3469,8 @@
         dlUi.q('#dlTitle').value = dlGuessTitle(document);
         // 點擊與觸控都攔在面板內，不讓它們落到雙擊自動捲動與正文點擊守衛
         ['click', 'touchstart', 'touchend', 'dblclick'].forEach(function(n) { host.addEventListener(n, function(e) { e.stopPropagation(); }); });
-        dlUi.q('#x').onclick = function() { host.style.display = 'none'; };
+        dlUi.q('#x').onclick = function() { dlUi.q('#p').hidden = true; dlRender(); };
+        dlUi.q('#mini').onclick = function() { dlUi.q('#p').hidden = false; dlRender(); };
         dlUi.q('#dlHere').onclick = function() { dlStart('here'); };
         dlUi.q('#dlAll').onclick = function() { dlStart('all'); };
         dlUi.q('#dlResume').onclick = function() { dlStart('resume'); };
