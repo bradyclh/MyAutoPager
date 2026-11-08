@@ -227,35 +227,35 @@ export async function handleApi(request, env) {
 }
 
 async function route(request, env) {
-        checkAuth(request, env);
-        const url = new URL(request.url);
-        // 書本 id 含 '/'，呼叫端以 encodeURIComponent 傳入；pathname 不會自動解碼 %2F
-        const parts = url.pathname.split('/').filter(Boolean).map(function(p) {
-            try { return decodeURIComponent(p); } catch (e) { throw new HttpError(400, '網址編碼錯誤'); }
-        });
-        const m = request.method;
-        // parts[0] === 'api'
-        if (parts[1] === 'ping' && parts.length === 2) return json({ ok: true });
-        if (parts[1] !== 'books') throw new HttpError(404, '未知的 API');
-        if (parts.length === 2 && m === 'GET') return listBooks(env);
-        const id = parts[2];
-        if (!id || id.length > 512) throw new HttpError(400, '書本 id 錯誤');
-        if (parts.length === 3) {
-            if (m === 'GET') return getBook(env, id);
-            if (m === 'PUT') return putBook(env, id, await readJson(request));
-            if (m === 'DELETE') return deleteBook(env, id);
+    checkAuth(request, env);
+    const url = new URL(request.url);
+    // 書本 id 含 '/'，呼叫端以 encodeURIComponent 傳入；pathname 不會自動解碼 %2F
+    const parts = url.pathname.split('/').filter(Boolean).map(function(p) {
+        try { return decodeURIComponent(p); } catch (e) { throw new HttpError(400, '網址編碼錯誤'); }
+    });
+    const m = request.method;
+    // parts[0] === 'api'
+    if (parts[1] === 'ping' && parts.length === 2) return json({ ok: true });
+    if (parts[1] !== 'books') throw new HttpError(404, '未知的 API');
+    if (parts.length === 2 && m === 'GET') return listBooks(env);
+    const id = parts[2];
+    if (!id || id.length > 512) throw new HttpError(400, '書本 id 錯誤');
+    if (parts.length === 3) {
+        if (m === 'GET') return getBook(env, id);
+        if (m === 'PUT') return putBook(env, id, await readJson(request));
+        if (m === 'DELETE') return deleteBook(env, id);
+    }
+    if (parts[3] === 'chapters') {
+        if (parts.length === 4 && m === 'POST') return putChapters(env, id, await readJson(request));
+        if (parts.length === 5 && m === 'GET') {
+            const idx = parseInt(parts[4], 10);
+            if (!(idx >= 0)) throw new HttpError(400, '章節序號錯誤');
+            return getChapter(env, id, idx);
         }
-        if (parts[3] === 'chapters') {
-            if (parts.length === 4 && m === 'POST') return putChapters(env, id, await readJson(request));
-            if (parts.length === 5 && m === 'GET') {
-                const idx = parseInt(parts[4], 10);
-                if (!(idx >= 0)) throw new HttpError(400, '章節序號錯誤');
-                return getChapter(env, id, idx);
-            }
-        }
-        if (parts[3] === 'progress' && parts.length === 4) {
-            if (m === 'GET') return getProgress(env, id);
-            if (m === 'PUT') return putProgress(env, id, await readJson(request));
-        }
-        throw new HttpError(405, '不支援的操作');
+    }
+    if (parts[3] === 'progress' && parts.length === 4) {
+        if (m === 'GET') return getProgress(env, id);
+        if (m === 'PUT') return putProgress(env, id, await readJson(request));
+    }
+    throw new HttpError(405, '不支援的操作');
 }
