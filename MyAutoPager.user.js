@@ -1943,10 +1943,17 @@
     // 一章拆成多頁時，站方按字數切頁，切點常落在句子中間（「不」｜「過眨眼的功夫…」）：
     // 同章續頁（新頁 h1 章號與畫面上最後一個相同）就把被切開的段落接回上一段，並丟掉重複的 h1。
     var OOP_PROMO_RE = /ｏｏｐ|𝗼𝗼𝗽|𝐨𝐨𝐩|oop\s*[.．]\s*tw|無錯章節|記住我們的域名/i;
+    // 推廣句會變形躲關鍵字：全形、數學粗體、小型大寫（ᴏᴏᴘ.ᴛᴡ）、字母間加空白（o o p . t w）。
+    // 比對前先 NFKC（全形與數學字母轉回 ASCII）、去空白，再把 NFKC 不處理的小型大寫轉回來
+    var OOP_SMALLCAPS = { 'ᴏ': 'o', 'ᴘ': 'p', 'ᴛ': 't', 'ᴡ': 'w' };
+    function oopFold(t) {
+        try { t = t.normalize('NFKC'); } catch (e) {}
+        return t.replace(/\s+/g, '').replace(/[ᴏᴘᴛᴡ]/g, function(c) { return OOP_SMALLCAPS[c]; });
+    }
     function oopDropPromo(ps) {
         for (var i = 0; i < ps.length; i++) {
             var t = ps[i].textContent.trim();
-            if (t.length < 40 && OOP_PROMO_RE.test(t)) ps[i].remove();
+            if (t.length < 40 && OOP_PROMO_RE.test(oopFold(t))) ps[i].remove();
         }
     }
     function oopFix(pageE) {
@@ -3020,6 +3027,9 @@
             if (!title) title = (doc.title || '').split(/\s*[_|｜\-–—]\s*/)[0].trim();
             // 正文第一行常是完整標題（oop 的 h1 只有章號，「第N章 標題」在第一段）
             if (lines.length && lines[0].length <= 60 && title && dlTitleKey(lines[0]).indexOf(dlTitleKey(title)) === 0) {
+                title = lines.shift();
+            } else if (lines.length && lines[0].length <= 40 && /^第[\d一二三四五六七八九十百千零〇两兩]+[章節节回卷]/.test(lines[0])) {
+                // 標題元素只有編號（oop 的 h1 是「002」），正文首行才是「第2章 …」
                 title = lines.shift();
             }
             if (!lines.length) return null;
