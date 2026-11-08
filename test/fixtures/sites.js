@@ -145,7 +145,7 @@ return [
     },
     {
         key: 'oop',
-        verified: false,
+        verified: true,
         // 一章拆成多頁：第一頁 a<id>a.html，之後 a<id>_2a.html
         chapter: [
             ['www.oop.tw', '/areada/a33508762a/a22487a.html'],
