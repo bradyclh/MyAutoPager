@@ -1,0 +1,16 @@
+# MyAutoPager 閱讀器 —— 部署步驟見 reader/README.md
+name = "myautopager-reader"
+main = "src/worker.js"
+compatibility_date = "2026-10-01"
+
+# reader.html 以字串形式打包進 Worker
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "myautopager"
+# `npx wrangler d1 create myautopager` 後把輸出的 database_id 填到這裡
+database_id = "REPLACE_WITH_DATABASE_ID"

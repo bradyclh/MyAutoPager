@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="書架">
+<title>MyAutoPager 書架</title>
+<style>
+:root { --bg: #f6f1e3; --fg: #2b2b2b; --muted: #8a8272; --line: rgba(0,0,0,.1); --bar: rgba(246,241,227,.94); --accent: #c46a1b; --fs: 20px; }
+:root[data-theme="white"] { --bg: #ffffff; --fg: #222222; --muted: #888; --bar: rgba(255,255,255,.94); }
+:root[data-theme="green"] { --bg: #cce8cf; --fg: #1f2d1f; --muted: #5d7360; --bar: rgba(204,232,207,.94); }
+:root[data-theme="night"] { --bg: #1e1e1e; --fg: #c8c8c8; --muted: #7d7d7d; --line: rgba(255,255,255,.1); --bar: rgba(30,30,30,.94); --accent: #e0954f; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body { font: 16px/1.6 -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; -webkit-text-size-adjust: 100%; touch-action: manipulation; }
+button { font: inherit; color: inherit; background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.hidden { display: none !important; }
+
+/* ---- 頂列 ---- */
+#bar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 8px; padding: 8px 16px; padding-top: max(8px, env(safe-area-inset-top)); background: var(--bar); border-bottom: 1px solid var(--line); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); transition: transform .2s; }
+#bar.away { transform: translateY(-110%); }
+#barTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; color: var(--muted); }
+#bar button { border: 0; padding: 6px 8px; font-size: 18px; line-height: 1; }
+
+/* ---- 書架 ---- */
+#shelf { max-width: 44em; margin: 0 auto; padding: 16px; }
+#shelf h1 { font-size: 22px; margin: 8px 0 16px; }
+.book { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
+.book h2 { font-size: 18px; margin: 0 0 4px; }
+.book .meta { font-size: 14px; color: var(--muted); }
+.book .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.empty { color: var(--muted); line-height: 1.9; }
+#login { max-width: 28em; margin: 15vh auto; padding: 16px; }
+#login input { width: 100%; font: inherit; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: inherit; margin: 12px 0; }
+
+/* ---- 閱讀 ---- */
+/* 正文區塊限寬並置中（不是文字逐行置中） */
+#reader { max-width: 40em; margin: 0 auto; padding: 8px 16px 40vh; }
+.chap h2 { font-size: calc(var(--fs) * 1.3); line-height: 1.4; margin: 1.6em 0 1em; text-align: center; }
+.chap p { font-size: var(--fs); line-height: 1.8; margin: 0 0 .8em; text-indent: 2em; overflow-wrap: anywhere; }
+.chap + .chap { border-top: 1px dashed var(--line); }
+.loadmore { display: block; margin: 24px auto; }
+.endnote { text-align: center; color: var(--muted); margin: 32px 0; font-size: 14px; }
+
+/* ---- 面板（目錄、Aa） ---- */
+.sheet { position: fixed; z-index: 20; right: 0; top: 0; bottom: 0; width: min(380px, 100vw); background: var(--bg); border-left: 1px solid var(--line); box-shadow: -4px 0 16px rgba(0,0,0,.15); display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); }
+.sheet header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.sheet .body { overflow: auto; flex: 1; padding: 8px 0; -webkit-overflow-scrolling: touch; }
+#tocList a { display: block; padding: 9px 16px; color: inherit; text-decoration: none; font-size: 15px; border-left: 3px solid transparent; }
+#tocList a.cur { border-left-color: var(--accent); color: var(--accent); }
+#tocList a:hover { background: var(--line); }
+#aa .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 16px; }
+#aa .sw { width: 40px; height: 40px; border-radius: 50%; padding: 0; }
+#aa .sw.cur, #aa button.cur { outline: 2px solid var(--accent); outline-offset: 2px; }
+#fsVal, #spVal { min-width: 3em; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* ---- 提示 ---- */
+#toast { position: fixed; z-index: 30; left: 50%; bottom: max(16px, env(safe-area-inset-bottom)); transform: translateX(-50%); max-width: calc(100vw - 32px); background: rgba(20,20,20,.92); color: #fff; border-radius: 12px; padding: 10px 14px; font-size: 14px; display: flex; gap: 10px; align-items: center; box-shadow: 0 2px 10px rgba(0,0,0,.3); }
+#toast button { color: #fff; border-color: rgba(255,255,255,.3); padding: 4px 10px; white-space: nowrap; }
+#asDot { position: fixed; z-index: 15; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); width: 10px; height: 10px; border-radius: 50%; background: #4caf50; }
+</style>
+</head>
+<body>
+<div id="bar">
+    <button id="btnShelf" title="書架" aria-label="書架">☰</button>
+    <div id="barTitle">書架</div>
+    <button id="btnToc" class="hidden" title="目錄" aria-label="目錄">≡</button>
+    <button id="btnAa" title="字級與背景" aria-label="字級與背景">Aa</button>
+</div>
+
+<div id="login" class="hidden">
+    <h1>MyAutoPager 書架</h1>
+    <p>輸入部署時設定的 TOKEN（<code>wrangler secret put TOKEN</code>）。只會存在這台裝置的瀏覽器裡。</p>
+    <input id="tokenInput" type="password" autocomplete="current-password" placeholder="TOKEN">
+    <button id="tokenSave" class="primary">登入</button>
+    <p id="loginErr" class="empty"></p>
+</div>
+
+<div id="shelf" class="hidden"></div>
+<div id="reader" class="hidden"></div>
+
+<div id="toc" class="sheet hidden" role="dialog" aria-label="目錄">
+    <header><strong id="tocTitle">目錄</strong><button data-close="toc">關閉</button></header>
+    <div class="body" id="tocList"></div>
+</div>
+
+<div id="aa" class="sheet hidden" role="dialog" aria-label="閱讀設定">
+    <header><strong>閱讀設定</strong><button data-close="aa">關閉</button></header>
+    <div class="body">
+        <div class="row"><span>字級</span><button data-fs="-2">A−</button><span id="fsVal"></span><button data-fs="2">A+</button><button id="fsAuto">自動</button></div>
+        <div class="row"><span>背景</span>
+            <button class="sw" data-theme="paper" aria-label="米黃" style="background:#f6f1e3"></button>
+            <button class="sw" data-theme="white" aria-label="純白" style="background:#ffffff"></button>
+            <button class="sw" data-theme="green" aria-label="護眼綠" style="background:#cce8cf"></button>
+            <button class="sw" data-theme="night" aria-label="夜間" style="background:#1e1e1e"></button>
+        </div>
+        <div class="row"><span>自動捲動</span><button data-sp="-10">慢</button><span id="spVal"></span><button data-sp="10">快</button></div>
+        <div class="row empty" style="font-size:14px">正文上快速點兩下：開始／停止自動捲動。<br>鍵盤 ← →：上一章／下一章。</div>
+        <div class="row"><span>這台裝置的名稱</span><button id="devName"></button></div>
+        <div class="row"><button id="logout">登出這台裝置</button></div>
+    </div>
+</div>
+
+<div id="toast" class="hidden"></div>
+<div id="asDot" class="hidden"></div>
+
+<script>
+(function() {
+'use strict';
+
+// ========== 設定（只存在這台裝置） ==========
+var LS = {
+    get: function(k, d) { try { var v = localStorage.getItem('apr_' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set: function(k, v) { try { localStorage.setItem('apr_' + k, JSON.stringify(v)); } catch (e) {} },
+    del: function(k) { try { localStorage.removeItem('apr_' + k); } catch (e) {} }
+};
+
+// userscript「開啟閱讀器」會帶 #t=<token>：存起來後立刻從網址列抹掉
+(function() {
+    var m = /[#&]t=([^&]+)/.exec(location.hash);
+    if (m) {
+        LS.set('token', decodeURIComponent(m[1]));
+        var rest = location.hash.replace(/[#&]t=[^&]+/, '').replace(/^#&?/, '');
+        history.replaceState(null, '', location.pathname + location.search + (rest ? '#' + rest : ''));
+    }
+})();
+
+function defaultDevice() {
+    var ua = navigator.userAgent;
+    if (/iPhone/.test(ua)) return 'iPhone';
+    if (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return 'iPad';
+    if (/Android/.test(ua)) return 'Android';
+    return '電腦';
+}
+
+var cfg = {
+    token: LS.get('token', ''),
+    device: LS.get('device', '') || defaultDevice(),
+    theme: LS.get('theme', 'paper'),
+    fs: LS.get('fs', 20),
+    fsAuto: LS.get('fsAuto', true),
+    speed: LS.get('speed', 40)
+};
+
+function autoFs() { var w = window.innerWidth; return w < 480 ? 18 : (w < 1600 ? 20 : 22); }
+function effFs() { return cfg.fsAuto ? autoFs() : cfg.fs; }
+function applyLook() {
+    document.documentElement.setAttribute('data-theme', cfg.theme);
+    document.documentElement.style.setProperty('--fs', effFs() + 'px');
+    $('fsVal').textContent = effFs();
+    $('fsAuto').classList.toggle('cur', cfg.fsAuto);
+    $('spVal').textContent = cfg.speed;
+    $('devName').textContent = cfg.device;
+    document.querySelectorAll('#aa .sw').forEach(function(b) { b.classList.toggle('cur', b.getAttribute('data-theme') === cfg.theme); });
+}
+
+function $(id) { return document.getElementById(id); }
+function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+// ========== API ==========
+function api(method, path, body, opts) {
+    var init = { method: method, headers: { authorization: 'Bearer ' + cfg.token } };
+    if (body !== undefined) { init.body = JSON.stringify(body); init.headers['content-type'] = 'application/json'; }
+    if (opts && opts.keepalive) init.keepalive = true;
+    return fetch('/api' + path, init).then(function(r) {
+        return r.json().catch(function() { return {}; }).then(function(d) {
+            if (r.status === 401) { showLogin('TOKEN 錯誤或已變更，請重新輸入'); throw new Error('401'); }
+            if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+            return d;
+        });
+    });
+}
+function bookPath(id) { return '/books/' + encodeURIComponent(id); }
+
+// ========== 提示 ==========
+var toastTimer = 0;
+function toast(msg, actions, ms) {
+    var t = $('toast');
+    t.textContent = '';
+    t.appendChild(el('span', '', msg));
+    (actions || []).forEach(function(a) {
+        var b = el('button', '', a.label);
+        b.onclick = function() { hideToast(); a.fn(); };
+        t.appendChild(b);
+    });
+    t.classList.remove('hidden');
+    clearTimeout(toastTimer);
+    if (ms !== 0) toastTimer = setTimeout(hideToast, ms || 3000);
+}
+function hideToast() { $('toast').classList.add('hidden'); }
+
+function ago(ts) {
+    if (!ts) return '';
+    var s = Math.max(0, (Date.now() - ts) / 1000);
+    if (s < 60) return '剛剛';
+    if (s < 3600) return Math.floor(s / 60) + ' 分鐘前';
+    if (s < 86400) return Math.floor(s / 3600) + ' 小時前';
+    return Math.floor(s / 86400) + ' 天前';
+}
+
+// ========== 畫面切換 ==========
+var view = '';
+function show(v) {
+    view = v;
+    ['login', 'shelf', 'reader'].forEach(function(k) { $(k).classList.toggle('hidden', k !== v); });
+    $('btnToc').classList.toggle('hidden', v !== 'reader');
+    $('btnShelf').classList.toggle('hidden', v === 'login');
+    closeSheets();
+    if (v !== 'reader') asStop();
+}
+function closeSheets() { $('toc').classList.add('hidden'); $('aa').classList.add('hidden'); }
+
+function showLogin(err) {
+    show('login');
+    $('barTitle').textContent = '登入';
+    $('loginErr').textContent = err || '';
+    $('tokenInput').value = '';
+    $('tokenInput').focus();
+}
+
+// ========== 書架 ==========
+function openShelf() {
+    if (!cfg.token) return showLogin();
+    show('shelf');
+    $('barTitle').textContent = '書架';
+    if (location.hash) history.replaceState(null, '', location.pathname);
+    var box = $('shelf');
+    box.textContent = '';
+    box.appendChild(el('h1', '', '書架'));
+    var loading = el('p', 'empty', '載入中…');
+    box.appendChild(loading);
+    api('GET', '/books').then(function(d) {
+        loading.remove();
+        if (!d.books.length) {
+            box.appendChild(el('p', 'empty', '還沒有書。到支援的小說站打開任一章，點左側「Aa」面板裡的「⬇ 下載」，選「從本章開始」或「整本」。'));
+            return;
+        }
+        d.books.forEach(function(b) { box.appendChild(bookCard(b)); });
+    }).catch(function(e) { loading.textContent = '載入失敗：' + e.message; });
+}
+
+function bookCard(b) {
+    var card = el('div', 'book');
+    card.appendChild(el('h2', '', b.title));
+    var where = b.progress_idx != null
+        ? '讀到 ' + (b.progress_title || ('第 ' + (b.progress_idx + 1) + ' 章')) + '（' + (b.progress_idx + 1) + ' / ' + b.chapter_count + '）'
+        : '共 ' + b.chapter_count + ' 章，尚未開始';
+    card.appendChild(el('div', 'meta', where));
+    var sub = [];
+    if (b.progress_at) sub.push(ago(b.progress_at) + (b.progress_device ? '在 ' + b.progress_device : ''));
+    if (b.next_url) sub.push('還有章節未下載');
+    if (sub.length) card.appendChild(el('div', 'meta', sub.join(' · ')));
+    var acts = el('div', 'acts');
+    var go = el('button', 'primary', b.progress_idx != null ? '繼續閱讀' : '開始閱讀');
+    go.onclick = function() { openBook(b.id); };
+    acts.appendChild(go);
+    if (b.source_url) {
+        var src = el('button', '', '原網站');
+        src.onclick = function() { window.open(b.source_url, '_blank', 'noopener'); };
+        acts.appendChild(src);
+    }
+    var del = el('button', '', '刪除');
+    del.onclick = function() {
+        if (!confirm('刪除《' + b.title + '》？已下載的章節與閱讀進度都會刪掉（不影響原網站）。')) return;
+        api('DELETE', bookPath(b.id)).then(openShelf).catch(function(e) { toast('刪除失敗：' + e.message); });
+    };
+    acts.appendChild(del);
+    card.appendChild(acts);
+    return card;
+}
+
+// ========== 閱讀 ==========
+// book：{id, title, chapters:[{idx,title,url}]}；畫面上是連續的幾章，捲到底自動接下一章
+var book = null, cache = {}, loadingNext = false, rendered = [], curIdx = -1, curRatio = 0;
+var localAt = 0, lastPushAt = 0, pushTimer = 0, dirty = false, remoteSeenAt = 0;
+
+function openBook(id, at) {
+    show('reader');
+    $('barTitle').textContent = '載入中…';
+    var box = $('reader');
+    box.textContent = '';
+    cache = {}; rendered = []; curIdx = -1; book = null;
+    Promise.all([
+        api('GET', bookPath(id)),
+        api('GET', bookPath(id) + '/progress').catch(function() { return { progress: null }; })
+    ]).then(function(r) {
+        book = { id: id, title: r[0].book.title, sourceUrl: r[0].book.source_url, chapters: r[0].chapters };
+        history.replaceState(null, '', '#b=' + encodeURIComponent(id));
+        if (!book.chapters.length) { box.appendChild(el('p', 'endnote', '這本書還沒有章節。')); $('barTitle').textContent = book.title; return; }
+        var start = at || pickStart(r[1].progress);
+        return jumpTo(start.idx, start.ratio);
+    }).catch(function(e) {
+        box.appendChild(el('p', 'endnote', '載入失敗：' + e.message));
+    });
+}
+
+// 本機與伺服器的進度取較新的那份
+function pickStart(remote) {
+    var local = LS.get('p_' + book.id, null);
+    var cand = [];
+    if (remote && remote.idx != null) cand.push({ idx: remote.idx, ratio: remote.ratio, at: remote.updated_at });
+    if (local) {
+        var li = idxOfUrl(local.url);
+        if (li >= 0) cand.push({ idx: li, ratio: local.ratio, at: local.at });
+    }
+    cand.sort(function(a, b) { return b.at - a.at; });
+    if (remote) remoteSeenAt = remote.updated_at;
+    return cand[0] || { idx: 0, ratio: 0 };
+}
+function idxOfUrl(u) {
+    for (var i = 0; i < book.chapters.length; i++) if (book.chapters[i].url === u) return i;
+    return -1;
+}
+
+function fetchChapter(idx) {
+    if (cache[idx]) return cache[idx];
+    cache[idx] = api('GET', bookPath(book.id) + '/chapters/' + idx).then(function(d) { return d.chapter; })
+        .catch(function(e) { delete cache[idx]; throw e; });
+    return cache[idx];
+}
+
+function chapterNode(c) {
+    var sec = el('section', 'chap');
+    sec.setAttribute('data-idx', c.idx);
+    sec.appendChild(el('h2', '', c.title));
+    c.content.split('\n').forEach(function(line) {
+        line = line.trim();
+        if (line) sec.appendChild(el('p', '', line));
+    });
+    return sec;
+}
+
+function jumpTo(idx, ratio) {
+    var box = $('reader');
+    box.textContent = '';
+    rendered = [];
+    idx = Math.max(0, Math.min(book.chapters.length - 1, idx));
+    if (idx > 0) {
+        var prev = el('button', 'loadmore', '← 上一章');
+        prev.onclick = function() { jumpTo(idx - 1, 0); };
+        box.appendChild(prev);
+    }
+    return fetchChapter(idx).then(function(c) {
+        var sec = chapterNode(c);
+        box.appendChild(sec);
+        rendered.push(idx);
+        $('barTitle').textContent = book.title + ' · ' + c.title;
+        // 等版面排好才捲到章內位置
+        requestAnimationFrame(function() {
+            window.scrollTo(0, sec.offsetTop - barH() + (ratio || 0) * sec.offsetHeight);
+            curIdx = idx; curRatio = ratio || 0;
+            ensureNext();
+        });
+        prefetch(idx + 1);
+    });
+}
+
+function barH() { return $('bar').offsetHeight; }
+function prefetch(i) { if (book && i < book.chapters.length) fetchChapter(i).catch(function() {}); }
+
+// 捲到離底部兩個螢幕內就接下一章
+function ensureNext() {
+    if (!book || loadingNext || view !== 'reader') return;
+    var last = rendered[rendered.length - 1];
+    if (last == null) return;
+    var box = $('reader');
+    if (box.getBoundingClientRect().bottom - window.innerHeight > window.innerHeight * 2) return;
+    if (last + 1 >= book.chapters.length) {
+        if (!box.querySelector('.endnote')) box.appendChild(el('p', 'endnote', '已是最後一章' + (book.sourceUrl ? '。新章節請到原網站用「⬇ 下載」更新。' : '。')));
+        return;
+    }
+    loadingNext = true;
+    fetchChapter(last + 1).then(function(c) {
+        box.appendChild(chapterNode(c));
+        rendered.push(last + 1);
+        // 畫面上只留最近 6 章，避免讀了一晚上之後 DOM 太大；移除上方內容要補回捲動位置
+        if (rendered.length > 6) {
+            var h0 = document.documentElement.scrollHeight;
+            // 頂端的「上一章」按鈕指向已被移除的章節，一併拿掉（要往回看用目錄）
+            var btn = box.querySelector('.loadmore');
+            if (btn) btn.remove();
+            while (rendered.length > 6) { box.querySelector('.chap').remove(); rendered.shift(); }
+            window.scrollBy(0, document.documentElement.scrollHeight - h0);
+        }
+        prefetch(last + 2);
+    }).catch(function(e) {
+        toast('下一章載入失敗：' + e.message, [{ label: '重試', fn: ensureNext }], 0);
+    }).then(function() { loadingNext = false; ensureNext(); });
+}
+
+// 目前章節：畫面頂端（頂列下方）落在哪一章
+function measure() {
+    if (!book || view !== 'reader') return;
+    var y = barH() + 4, secs = $('reader').querySelectorAll('.chap'), hit = null;
+    for (var i = 0; i < secs.length; i++) {
+        var r = secs[i].getBoundingClientRect();
+        if (r.top <= y && r.bottom > y) { hit = { idx: +secs[i].getAttribute('data-idx'), ratio: (y - r.top) / r.height }; break; }
+    }
+    if (!hit && secs.length) {
+        var r0 = secs[0].getBoundingClientRect();
+        if (r0.top > y) hit = { idx: +secs[0].getAttribute('data-idx'), ratio: 0 };
+    }
+    if (!hit) return;
+    if (hit.idx !== curIdx) {
+        var c = book.chapters[hit.idx];
+        $('barTitle').textContent = book.title + ' · ' + (c ? c.title : '');
+    }
+    if (hit.idx !== curIdx || Math.abs(hit.ratio - curRatio) > 0.002) {
+        curIdx = hit.idx; curRatio = hit.ratio;
+        saveLocal();
+    }
+}
+
+function saveLocal() {
+    var c = book && book.chapters[curIdx];
+    if (!c) return;
+    localAt = Date.now();
+    LS.set('p_' + book.id, { url: c.url, ratio: curRatio, at: localAt });
+    dirty = true;
+    schedulePush();
+}
+
+// 送到伺服器：停下來 3 秒後送，連續捲動時最多每 15 秒送一次
+function schedulePush() {
+    clearTimeout(pushTimer);
+    var wait = Date.now() - lastPushAt > 15000 ? 3000 : Math.max(3000, 15000 - (Date.now() - lastPushAt));
+    pushTimer = setTimeout(pushNow, wait);
+}
+function pushNow(keepalive) {
+    clearTimeout(pushTimer);
+    if (!dirty || !book) return;
+    var c = book.chapters[curIdx];
+    if (!c) return;
+    dirty = false;
+    lastPushAt = Date.now();
+    var at = localAt;
+    api('PUT', bookPath(book.id) + '/progress', { chapterUrl: c.url, ratio: curRatio, device: cfg.device, updatedAt: at }, { keepalive: !!keepalive })
+        .then(function(d) { if (d.progress) remoteSeenAt = Math.max(remoteSeenAt, d.progress.updated_at); })
+        .catch(function() { dirty = true; });
+}
+
+// 回到這個分頁時，看看另一台裝置有沒有讀得更前面
+function checkRemote() {
+    if (!book || view !== 'reader') return;
+    var id = book.id;
+    api('GET', bookPath(id) + '/progress').then(function(d) {
+        var p = d.progress;
+        if (!p || !book || book.id !== id || p.idx == null) return;
+        if (p.updated_at <= Math.max(localAt, remoteSeenAt)) return;
+        remoteSeenAt = p.updated_at;
+        if (p.device === cfg.device) return;
+        if (p.idx === curIdx && Math.abs(p.ratio - curRatio) < 0.05) return;
+        var t = book.chapters[p.idx] ? book.chapters[p.idx].title : ('第 ' + (p.idx + 1) + ' 章');
+        toast((p.device || '另一台裝置') + ' ' + ago(p.updated_at) + '讀到「' + t + '」', [
+            { label: '跳過去', fn: function() { jumpTo(p.idx, p.ratio); } },
+            { label: '留在這裡', fn: function() { saveLocal(); } }
+        ], 0);
+    }).catch(function() {});
+}
+
+// ========== 目錄 ==========
+function openToc() {
+    if (!book) return;
+    var list = $('tocList');
+    list.textContent = '';
+    $('tocTitle').textContent = book.title + '（' + book.chapters.length + ' 章）';
+    var cur = null;
+    book.chapters.forEach(function(c, i) {
+        var a = el('a', i === curIdx ? 'cur' : '', c.title);
+        a.href = '#';
+        a.onclick = function(e) { e.preventDefault(); closeSheets(); jumpTo(i, 0).then(saveLocal); };
+        list.appendChild(a);
+        if (i === curIdx) cur = a;
+    });
+    $('toc').classList.remove('hidden');
+    if (cur) cur.scrollIntoView({ block: 'center' });
+}
+
+// ========== 自動捲動（雙擊正文開始／停止） ==========
+var asOn = false, asRaf = 0, asLast = 0, asAcc = 0;
+function asStep(ts) {
+    if (!asOn) return;
+    if (asLast) {
+        asAcc += cfg.speed * Math.min(100, ts - asLast) / 1000;
+        var px = Math.floor(asAcc);
+        if (px >= 1) { asAcc -= px; window.scrollBy(0, px); }
+    }
+    asLast = ts;
+    asRaf = requestAnimationFrame(asStep);
+}
+function asStart() { if (asOn || view !== 'reader') return; asOn = true; asLast = 0; asAcc = 0; $('asDot').classList.remove('hidden'); $('bar').classList.add('away'); asRaf = requestAnimationFrame(asStep); }
+function asStop() { asOn = false; cancelAnimationFrame(asRaf); $('asDot').classList.add('hidden'); $('bar').classList.remove('away'); }
+
+var lastTap = 0, lastTapX = 0, lastTapY = 0;
+$('reader').addEventListener('click', function(e) {
+    if (e.target.closest('button, a')) return;
+    var sel = window.getSelection && window.getSelection();
+    if (sel && !sel.isCollapsed) return;
+    var now = Date.now();
+    if (now - lastTap < 350 && Math.abs(e.clientX - lastTapX) < 20 && Math.abs(e.clientY - lastTapY) < 20) {
+        lastTap = 0;
+        asOn ? asStop() : asStart();
+        return;
+    }
+    lastTap = now; lastTapX = e.clientX; lastTapY = e.clientY;
+});
+
+// ========== 事件 ==========
+var scrollRaf = 0;
+window.addEventListener('scroll', function() {
+    if (scrollRaf) return;
+    scrollRaf = requestAnimationFrame(function() { scrollRaf = 0; measure(); ensureNext(); });
+}, { passive: true });
+window.addEventListener('resize', function() { if (cfg.fsAuto) applyLook(); });
+document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'hidden') pushNow(true);
+    else checkRemote();
+});
+window.addEventListener('pagehide', function() { pushNow(true); });
+window.addEventListener('keydown', function(e) {
+    if (view !== 'reader' || e.target.closest('input')) return;
+    if (e.key === 'ArrowRight') { e.preventDefault(); jumpTo(curIdx + 1, 0).then(saveLocal); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); jumpTo(curIdx - 1, 0).then(saveLocal); }
+    else if (e.key === 'Escape') { asStop(); closeSheets(); }
+});
+window.addEventListener('popstate', route);
+
+$('btnShelf').onclick = function() { pushNow(); openShelf(); };
+$('btnToc').onclick = openToc;
+$('btnAa').onclick = function() { var a = $('aa'); var open = a.classList.contains('hidden'); closeSheets(); if (open) a.classList.remove('hidden'); };
+document.querySelectorAll('[data-close]').forEach(function(b) { b.onclick = closeSheets; });
+$('aa').addEventListener('click', function(e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    if (b.hasAttribute('data-fs')) { cfg.fs = Math.max(14, Math.min(32, effFs() + +b.getAttribute('data-fs'))); cfg.fsAuto = false; LS.set('fs', cfg.fs); LS.set('fsAuto', false); }
+    else if (b.id === 'fsAuto') { cfg.fsAuto = true; LS.set('fsAuto', true); }
+    else if (b.hasAttribute('data-theme')) { cfg.theme = b.getAttribute('data-theme'); LS.set('theme', cfg.theme); }
+    else if (b.hasAttribute('data-sp')) { cfg.speed = Math.max(10, Math.min(200, cfg.speed + +b.getAttribute('data-sp'))); LS.set('speed', cfg.speed); }
+    else if (b.id === 'devName') {
+        var n = prompt('這台裝置的名稱（同步提示會顯示「某某裝置讀到…」）', cfg.device);
+        if (n && n.trim()) { cfg.device = n.trim().slice(0, 32); LS.set('device', cfg.device); }
+    }
+    else if (b.id === 'logout') { if (confirm('登出後要重新輸入 TOKEN。')) { LS.del('token'); cfg.token = ''; showLogin(); } return; }
+    else return;
+    applyLook();
+});
+$('tokenSave').onclick = function() {
+    var t = $('tokenInput').value.trim();
+    if (!t) return;
+    cfg.token = t;
+    api('GET', '/ping').then(function() { LS.set('token', t); route(); }).catch(function(e) { if (e.message !== '401') $('loginErr').textContent = '連線失敗：' + e.message; });
+};
+$('tokenInput').addEventListener('keydown', function(e) { if (e.key === 'Enter') $('tokenSave').click(); });
+
+// #b=<書本 id> 直接開書（userscript 下載完的「開啟閱讀器」會帶上）
+function route() {
+    if (!cfg.token) return showLogin();
+    var m = /[#&]b=([^&]+)/.exec(location.hash);
+    if (m) openBook(decodeURIComponent(m[1]));
+    else openShelf();
+}
+
+applyLook();
+route();
+})();
+</script>
+</body>
+</html>
