@@ -305,7 +305,7 @@ function bookCard(b) {
 // ========== 下載狀態與紀錄 ==========
 // userscript 下載中約每 15 秒回報一次；超過 2 分鐘沒回報，多半是分頁關了或被瀏覽器暫停
 var RUN_STALE_MS = 120000;
-var MODE_NAME = { here: '從本章開始', all: '整本', resume: '續抓新章節' };
+var MODE_NAME = { here: '從本章開始', all: '整本（本章起）', front: '整本（補前面）', resume: '續抓新章節' };
 
 function runState(r) {
     if (r.state === 'running' && Date.now() - r.updated_at > RUN_STALE_MS) return 'stale';

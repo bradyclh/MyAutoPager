@@ -221,7 +221,7 @@ check('兩版的下載共用區塊逐字相同', () => {
 const dl = (() => {
     const ctx = { URL, console };
     vm.createContext(ctx);
-    vm.runInContext(dlDesktop + '\nthis.api = { dlTitleKey, dlJoinLines, dlShape, dlLastNum, dlBookId, dlAbsUrl, dlNormHost };', ctx);
+    vm.runInContext(dlDesktop + '\nthis.api = { dlTitleKey, dlJoinLines, dlShape, dlLastNum, dlBookId, dlAbsUrl, dlNormHost, dlEstimate, dlProgressText };', ctx);
     return ctx.api;
 })();
 
@@ -259,6 +259,18 @@ check('目錄頁挑章節連結用的網址形狀', () => {
     same(out, 'novels 續頁', dl.dlShape('https://novels.com.tw/novels/x/206331926_2.html'), '/novels/x/#.html');
     if (dl.dlShape('https://uukanshu.cc/b/123/') === dl.dlShape('https://uukanshu.cc/b/123/456.html')) out.push('書頁與章節頁形狀相同');
     same(out, '最後一段數字', dl.dlLastNum('https://www.qimao.com/shuku/195958-47540682/'), 47540682);
+    return out;
+});
+
+check('進度估計：站方寫明的總章數優先；實際超過估計就不顯示總數', () => {
+    const out = [];
+    const list = Array.from({ length: 42 }, (_, i) => 'https://a.tw/b/' + (i + 1) + '.html');
+    same(out, '目錄只列 42 章、站方寫共 120 章', dl.dlEstimate({ list, total: 120 }, list[0]), 120);
+    same(out, '從第 10 章開始', dl.dlEstimate({ list, total: 42 }, list[9]), 33);
+    same(out, '本章不在目錄清單裡就不估', dl.dlEstimate({ list, total: 120 }, 'https://a.tw/b/99.html'), 0);
+    const t = dl.dlProgressText({ chapters: 48, est: 42, slow: 1, t0: 0 }, '049');
+    if (/約 42/.test(t)) out.push('實際 48 章超過估計 42 仍顯示：' + t);
+    same(out, '超過估計時的文字', t, '已抓 48 章：049');
     return out;
 });
 
