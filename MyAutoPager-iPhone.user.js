@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.4.7
+// @version      1.4.8
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -1615,8 +1615,15 @@
 
                 var vh = window.innerHeight;
                 var docH = document.documentElement.scrollHeight;
+                // 觸發基準：正文底部，而非整頁底部。小說站正文下方常有很長的推薦書單、留言區
+                // （如 oop.tw），以頁底為準時讀完正文還得再捲一大段才會載入下一章。
+                // scrollE 指定基準元素，未指定時以 pageE 最後一個元素（畫面上最後一段正文）為準
+                var baseSel = curSite.pager.scrollE || curSite.pager.pageE, baseAll = [];
+                try { baseAll = getAll(baseSel); } catch (e) {}
+                var baseE = baseAll[baseAll.length - 1];
+                var dist = baseE ? baseE.getBoundingClientRect().bottom - vh : docH - (vh + st);
 
-                if (docH <= vh + st + scrollD) {
+                if (dist <= scrollD) {
                     pagerBusy = true;
                     setTimeout(function() { pagerBusy = false; }, interval);
                     var url = getNextUrl();
