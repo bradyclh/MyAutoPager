@@ -23,10 +23,11 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .hidden { display: none !important; }
 
 /* ---- 頂列 ---- */
-#bar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 8px; padding: 8px 16px; padding-top: max(8px, env(safe-area-inset-top)); background: var(--bar); border-bottom: 1px solid var(--line); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); transition: transform .2s; }
+#bar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 8px; padding: 2px 8px; padding-top: max(2px, env(safe-area-inset-top)); background: var(--bar); border-bottom: 1px solid var(--line); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); transition: transform .2s; }
 #bar.away { transform: translateY(-110%); }
 #barTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; color: var(--muted); }
-#bar button { border: 0; padding: 6px 8px; font-size: 18px; line-height: 1; }
+#bar button { border: 0; padding: 0 8px; min-width: 44px; min-height: 44px; font-size: 15px; line-height: 1; white-space: nowrap; }
+#bar #btnAa { font-size: 18px; }
 
 /* ---- 書架 ---- */
 #shelf { max-width: 44em; margin: 0 auto; padding: 16px; }
@@ -87,9 +88,9 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 </head>
 <body>
 <div id="bar">
-    <button id="btnShelf" title="書架" aria-label="書架">☰</button>
+    <button id="btnShelf" class="hidden" title="回書架">‹ 書架</button>
     <div id="barTitle">書架</div>
-    <button id="btnToc" class="hidden" title="目錄" aria-label="目錄">≡</button>
+    <button id="btnToc" class="hidden" title="目錄">目錄</button>
     <button id="btnAa" title="字級與背景" aria-label="字級與背景">Aa</button>
 </div>
 
@@ -233,7 +234,7 @@ function show(v) {
     view = v;
     ['login', 'shelf', 'reader'].forEach(function(k) { $(k).classList.toggle('hidden', k !== v); });
     $('btnToc').classList.toggle('hidden', v !== 'reader');
-    $('btnShelf').classList.toggle('hidden', v === 'login');
+    $('btnShelf').classList.toggle('hidden', v !== 'reader');
     closeSheets();
     if (v !== 'reader') asStop();
 }
@@ -255,7 +256,6 @@ function openShelf() {
     if (location.hash) history.replaceState(null, '', location.pathname);
     var box = $('shelf');
     box.textContent = '';
-    box.appendChild(el('h1', '', '書架'));
     var loading = el('p', 'empty', '載入中…');
     box.appendChild(loading);
     api('GET', '/books').then(function(d) {
