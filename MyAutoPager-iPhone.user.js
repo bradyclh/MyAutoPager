@@ -2606,7 +2606,7 @@
                 });
             }).catch(function() {});
         };
-        var go = function() { check(); timer = setInterval(check, 3000); };
+        var go = function() { timer = setInterval(check, 3000); check(); };
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function() { setTimeout(go, 300); });
         else setTimeout(go, 300);
     }
