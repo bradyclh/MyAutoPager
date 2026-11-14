@@ -217,6 +217,38 @@ check('兩版的下載共用區塊逐字相同', () => {
     return ['內容不同'];
 });
 
+function guardBlock(src) {
+    const a = src.indexOf('// ==== guard-shared-begin ====');
+    const b = src.indexOf('// ==== guard-shared-end ====');
+    return a < 0 || b < 0 ? null : src.slice(a, b);
+}
+check('兩版的頁面守衛區塊逐字相同', () => {
+    const a = guardBlock(db.desktop.src), b = guardBlock(db.iphone.src);
+    if (!a || !b) return ['找不到 guard-shared-begin／end 標記'];
+    return a === b ? [] : ['桌面版與 iPhone 版的 apPageGuardMain 不同'];
+});
+check('桌面版 document-start 守衛涵蓋所有 popupBlock 規則的網域', () => {
+    const m = /var AP_GUARD_HOST_RE = (\/.*\/i);/.exec(db.desktop.src);
+    if (!m) return ['找不到 AP_GUARD_HOST_RE'];
+    const re = eval(m[1]);
+    const out = [];
+    for (const site of sites) {
+        for (const [host, path] of site.chapter) {
+            const d = parse.desktopMatch(db.desktop.rules, host, path);
+            if (d && db.desktop.rules[d.key].popupBlock && !re.test(host)) out.push(`${d.key}：${host} 有 popupBlock 卻不在 AP_GUARD_HOST_RE`);
+        }
+    }
+    for (const [k, r] of Object.entries(db.desktop.rules)) {
+        if (!r.popupBlock) continue;
+        // fixtures 沒有章節頁樣本的規則，用固定範例網域檢查
+        const SAMPLE = { thepaperbooks: 'www.thepaperbooks.com' };
+        if (sites.some((s) => s.key === k)) continue;
+        if (!SAMPLE[k]) out.push(`${k} 有 popupBlock 但沒有範例網域，請加到 SAMPLE`);
+        else if (!re.test(SAMPLE[k])) out.push(`${k}：${SAMPLE[k]} 不在 AP_GUARD_HOST_RE`);
+    }
+    return out;
+});
+
 // 共用區塊只定義函式與常數，可以單獨在 vm 裡求值，測其中不碰 DOM 的純函式
 const dl = (() => {
     const ctx = { URL, console };
