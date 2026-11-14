@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.3.3
+// @version      1.3.4
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -2988,6 +2988,10 @@
         var bm = /《([^》]{1,100})》/.exec(doc.title || '');
         if (bm) return bm[1].trim();
         var parts = (doc.title || '').split(/\s*[_|｜\-–—]\s*/).filter(Boolean);
+        // 標題可能是「章名_書名_站名」或「書名_章名_…_站名」（如 uuread）：先剔除像章名的段，取剩下的第一段
+        var chapterRe = /^\s*(第\s*[0-9０-９零〇一二兩两三四五六七八九十百千萬万]+\s*[章回節节話话卷集篇]|chapter\s*\d|ch\.?\s*\d)/i;
+        var rest = parts.filter(function(p) { return !chapterRe.test(p); });
+        if (rest.length && rest.length < parts.length) return rest[0].trim().slice(0, 100);
         return (parts.length >= 2 ? parts[1] : parts[0] || '').trim().slice(0, 100);
     }
 

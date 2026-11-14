@@ -221,7 +221,7 @@ check('兩版的下載共用區塊逐字相同', () => {
 const dl = (() => {
     const ctx = { URL, console };
     vm.createContext(ctx);
-    vm.runInContext(dlDesktop + '\nthis.api = { dlTitleKey, dlJoinLines, dlShape, dlLastNum, dlBookId, dlAbsUrl, dlNormHost, dlEstimate, dlProgressText };', ctx);
+    vm.runInContext(dlDesktop + '\nthis.api = { dlTitleKey, dlJoinLines, dlShape, dlLastNum, dlBookId, dlAbsUrl, dlNormHost, dlEstimate, dlProgressText, dlGuessTitle };', ctx);
     return ctx.api;
 })();
 
@@ -281,6 +281,17 @@ check('書本 id：電腦與手機網域前綴不同仍是同一本', () => {
     same(out, '沒有目錄時用章節目錄', dl.dlBookId('', 'https://ttks.tw/novel/chapters/abc/16.html'), 'ttks.tw/novel/chapters/abc/');
     same(out, 'javascript: 連結不算', dl.dlAbsUrl('javascript:void(0)', 'https://a.com/'), '');
     same(out, '相對網址以來源頁解析', dl.dlAbsUrl('17.html#top', 'https://a.com/x/16.html'), 'https://a.com/x/17.html');
+    return out;
+});
+
+check('書名猜測：不能把章名當書名', () => {
+    const out = [];
+    const doc = (title, meta) => ({ title, querySelector: () => meta ? { getAttribute: () => meta } : null });
+    same(out, 'uuread：書名_章名_…_站名', dl.dlGuessTitle(doc('鬥破：全圖最強，我永遠在你之上_第1章 九星大斗師！三品煉藥師！_免費小說閱讀_uu看書')), '鬥破：全圖最強，我永遠在你之上');
+    same(out, '章名_書名_站名', dl.dlGuessTitle(doc('第十二章 出山_劍來_某某小說網')), '劍來');
+    same(out, '書名號優先', dl.dlGuessTitle(doc('第3章 下山 - 《劍來》 - 站名')), '劍來');
+    same(out, 'og:novel:book_name 最優先', dl.dlGuessTitle(doc('第1章_錯的', '對的書名')), '對的書名');
+    same(out, '沒有章名時沿用第二段', dl.dlGuessTitle(doc('序言_某書_站名')), '某書');
     return out;
 });
 
