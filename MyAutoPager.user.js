@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.3.5
+// @version      1.4.0
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -22,7 +22,7 @@
 // @connect      workers.dev
 // @connect      *
 // @license      GPL-3.0
-// @run-at       document-end
+// @run-at       document-start
 // @exclude      https://*.taobao.com/*
 // @exclude      https://*.tmall.com/*
 // @exclude      https://*.1688.com/*
@@ -58,7 +58,7 @@
 // @exclude      https://*.58.com/*
 // ==/UserScript==
 
-(function() {
+(function apMain() {
     'use strict';
 
     // 在自己的雲端閱讀器（Cloudflare Workers）網頁上：只做配對，不翻頁、不攔彈窗。見 dlPairFromReader()
@@ -78,6 +78,171 @@
         if (window.frameElement && window.frameElement.id === 'Autopage_iframe') return;
     } catch (e) { /* 跨域 frameElement 取用失敗可忽略，window.name 已涵蓋 */ }
 
+
+    // ========== 頁面世界守衛（document-start） ==========
+    // 腳本以 document-start 執行：先把守衛塞進頁面世界（要搶在廣告腳本之前掛好），
+    // 其餘全部等 DOMContentLoaded 再跑，時機等同原本的 document-end。
+    // 只在帶 popupBlock 的網站裝；這時規則表還沒建，網域另列在 AP_GUARD_HOST_RE（static.test.js 檢查涵蓋所有 popupBlock 規則）
+    var AP_GUARD_HOST_RE = /(^|\.)(look\.thisiscm\.com|look\.twword\.com|uukanshu\.cc|69shuba\.tw|69shuba\.com|uuread\.tw|thepaperbooks\.com|ixdzs\.hk|ixdzs\.tw|ixdzs8\.com|qimao\.com|hjwzw\.com|ttks\.tw|twkan\.com|novels\.com\.tw|oop\.tw)$/i;
+    if (document.readyState === 'loading' && !apMain.deferred) {
+        apMain.deferred = true;
+        if (AP_GUARD_HOST_RE.test(location.hostname)) apInstallPageGuard();
+        document.addEventListener('DOMContentLoaded', function() { apMain(); }, { once: true });
+        return;
+    }
+    function apInstallPageGuard() {
+        try {
+            var sc = document.createElement('script');
+            sc.textContent = '(' + apPageGuardMain.toString() + ')();\n//# sourceURL=myautopager-guard.js';
+            (document.head || document.documentElement).appendChild(sc);
+            if (sc.parentNode) sc.parentNode.removeChild(sc);
+            if (document.documentElement.getAttribute('data-ap-pageguard') !== '1') console.warn('[MyAutoPager] 頁面守衛未生效（多半是網站 CSP 擋掉內嵌 script）');
+        } catch (e) {}
+    }
+    // ==== guard-shared-begin ====
+    // 兩版逐字相同（static.test.js 檢查）
+    function apPageGuardMain() {
+        if (window.__apPageGuard) return;
+        var root = document.documentElement;
+        // 回報給 content 世界：資料放 DOM 屬性而不是 CustomEvent.detail，
+        // detail 物件跨世界不一定讀得到，DOM 屬性一定可以
+        function report(kind, url) {
+            try {
+                root.setAttribute('data-ap-blocked', kind + ' ' + String(url || '').slice(0, 200));
+                root.dispatchEvent(new Event('ap-blocked'));
+            } catch (e) {}
+        }
+        function blockedOpen(url) { report('open', url); return null; }
+        // 鎖成不可寫、不可重設，頁面腳本改不回去
+        function lock(win) {
+            try {
+                if (!win || win.__apOpenLocked) return;
+                Object.defineProperty(win, 'open', { value: blockedOpen, writable: false, configurable: false });
+                Object.defineProperty(win, '__apOpenLocked', { value: true });
+            } catch (e) { try { win.open = blockedOpen; } catch (e2) {} }
+        }
+        lock(window);
+
+        // 同源 iframe（about:blank / srcdoc）的 contentWindow.open 是乾淨的，
+        // 「插一個 iframe 再呼叫它的 open」是繞過覆寫的經典手法。兩個入口都堵：
+        // 一插進 DOM 就鎖（frames[0] 這條路也走這裡），取 contentWindow 時再鎖一次
+        //（導航後 Window 物件可能換新）。跨域的存取 document 會丟例外 → 略過，
+        // 那些交給 content 世界的 sandbox。
+        function lockFrame(f) {
+            try {
+                var w = f.contentWindow;
+                if (w && w.document) lock(w);
+                // 導航後 Window 物件可能換新，載入完再鎖一次
+                if (!f.__apLoadHooked) { f.__apLoadHooked = true; f.addEventListener('load', function() { lockFrame(f); }); }
+            } catch (e) {}
+        }
+        function lockTree(n) {
+            try {
+                if (!n || n.nodeType !== 1) return;
+                if (n.tagName === 'IFRAME') { lockFrame(n); return; }
+                if (!n.querySelectorAll) return;
+                var fs = n.querySelectorAll('iframe');
+                for (var k = 0; k < fs.length; k++) lockFrame(fs[k]);
+            } catch (e) {}
+        }
+        // MutationObserver 是 microtask，來不及應付「插入 iframe → 同一行就拿
+        // frames[n].open」這種同步寫法（frames[] 不經 contentWindow getter）。
+        // 所以插入 DOM 的常用方法也包一層，在插入的當下就鎖。
+        function wrapInsert(proto, name) {
+            try {
+                var orig = proto[name];
+                if (typeof orig !== 'function') return;
+                Object.defineProperty(proto, name, {
+                    value: function() {
+                        var r = orig.apply(this, arguments);
+                        for (var i = 0; i < arguments.length; i++) {
+                            var a = arguments[i];
+                            // DocumentFragment 插入後已清空，改掃目標節點
+                            if (a && a.nodeType === 11) lockTree(this); else lockTree(a);
+                        }
+                        return r;
+                    },
+                    writable: true, configurable: true
+                });
+            } catch (e) {}
+        }
+        wrapInsert(Node.prototype, 'appendChild');
+        wrapInsert(Node.prototype, 'insertBefore');
+        wrapInsert(Element.prototype, 'append');
+        wrapInsert(Element.prototype, 'prepend');
+        // 其餘插入路徑（innerHTML、parser 解析出來的）由觀察器補上
+        try {
+            new MutationObserver(function(muts) {
+                for (var i = 0; i < muts.length; i++) {
+                    var added = muts[i].addedNodes;
+                    for (var j = 0; j < added.length; j++) lockTree(added[j]);
+                }
+            }).observe(document, { childList: true, subtree: true });
+        } catch (e) {}
+        try {
+            var d = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+            if (d && d.get) {
+                Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+                    get: function() {
+                        var w = d.get.call(this);
+                        try { if (w && w.document) lock(w); } catch (e) {}
+                        return w;
+                    },
+                    configurable: true
+                });
+            }
+        } catch (e) {}
+
+        // 程式化點擊：a.click() 若錨點還沒進 DOM，事件傳不到 document，
+        // 點擊守衛攔不到，瀏覽器卻照樣開新分頁。只影響腳本呼叫的 .click()。
+        try {
+            var nativeClick = HTMLAnchorElement.prototype.click;
+            HTMLAnchorElement.prototype.click = function() {
+                var raw = '', tgt = null;
+                try { raw = this.getAttribute('href') || ''; tgt = this.getAttribute('target'); } catch (e) {}
+                var isJs = raw.toLowerCase().replace(/\s/g, '').indexOf('javascript:') === 0;
+                if (isJs || tgt === '_blank' || tgt === '_new') { report('click', raw); return; }
+                return nativeClick.apply(this, arguments);
+            };
+        } catch (e) {}
+
+        // 外站廣告腳本（如 uuread 的 popunder）在 window／document 掛 click、touchend 等監聽器：
+        // 捕獲階段吞掉整頁點擊（連腳本面板的按鈕都按不到），再趁使用者點擊開廣告分頁。
+        // 呼叫堆疊裡「全是外站網址」的這類註冊直接不掛；站方自己的程式（堆疊裡有本站網址）照常。
+        // 注入時帶 sourceURL，守衛自己的堆疊框沒有 http 網址，不會被當成本站。
+        try {
+            var siteOf = function(h) {
+                var p = String(h).toLowerCase().split('.');
+                var n = p.length > 2 && /^(com|net|org|edu|gov|co)$/.test(p[p.length - 2]) ? 3 : 2;
+                return p.slice(-n).join('.');
+            };
+            var mySite = siteOf(location.hostname);
+            var GUARD_EVT = /^(click|auxclick|dblclick|mousedown|mouseup|pointerdown|pointerup|touchstart|touchend|contextmenu)$/;
+            var fromOtherSite = function() {
+                var lim = Error.stackTraceLimit, st = '';
+                try { Error.stackTraceLimit = 50; st = String(new Error().stack || ''); } catch (e) {}
+                try { Error.stackTraceLimit = lim; } catch (e) {}
+                var urls = st.match(/https?:\/\/[^\/\s:)]+/g);
+                if (!urls) return false;
+                for (var i = 0; i < urls.length; i++) if (siteOf(urls[i].replace(/^https?:\/\//, '')) === mySite) return false;
+                return true;
+            };
+            var nativeAdd = EventTarget.prototype.addEventListener;
+            EventTarget.prototype.addEventListener = function(type, fn, opt) {
+                if ((this === window || this === document || this === document.documentElement || this === document.body) &&
+                    GUARD_EVT.test(String(type)) && fromOtherSite()) {
+                    root.setAttribute('data-ap-listener-blocked', String(+(root.getAttribute('data-ap-listener-blocked') || 0) + 1));
+                    return;
+                }
+                return nativeAdd.apply(this, arguments);
+            };
+        } catch (e) {}
+
+        try { Object.defineProperty(window, '__apPageGuard', { value: true }); } catch (e) {}
+        // 這個標記讓 content 世界知道守衛真的跑起來了（被 CSP 擋掉就不會有）
+        root.setAttribute('data-ap-pageguard', '1');
+    }
+    // ==== guard-shared-end ====
 
     // ========== 彈窗攔截：條件式閘道 ==========
     // 此腳本 @match */*，攔截僅在匹配到帶 popupBlock 旗標的規則後啟用，避免破壞一般站點（如 OAuth popup）。
@@ -3543,6 +3708,19 @@
         dlUi.q('#dlTitle').value = dlGuessTitle(document);
         // 點擊與觸控都攔在面板內，不讓它們落到雙擊自動捲動與正文點擊守衛
         ['click', 'touchstart', 'touchend', 'dblclick'].forEach(function(n) { host.addEventListener(n, function(e) { e.stopPropagation(); }); });
+        // 有些站（如 uuread）的廣告腳本在 window 捕獲階段吞掉所有 click／touchend，面板按鈕收不到；
+        // 按鈕改由 pointerup 觸發（按下與放開在同一顆才算），click 只在 pointerup 沒觸發時才處理（鍵盤 Enter／空白鍵）
+        var tapBtn = null, tapAt = 0;
+        function dlTapTarget(e) { var t = e.target; return t && t.closest ? t.closest('button, [role="button"]') : null; }
+        sh.addEventListener('pointerdown', function(e) { tapBtn = dlTapTarget(e); }, true);
+        sh.addEventListener('pointercancel', function() { tapBtn = null; }, true);
+        sh.addEventListener('pointerup', function(e) {
+            var b = dlTapTarget(e);
+            if (!b || b !== tapBtn || b.disabled || !b.onclick) return;
+            tapBtn = null; tapAt = Date.now();
+            b.onclick.call(b, e);
+        }, true);
+        sh.addEventListener('click', function(e) { if (Date.now() - tapAt < 800) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
         dlUi.q('#x').onclick = function() { dlUi.q('#p').hidden = true; dlRender(); };
         dlUi.q('#mini').onclick = function() { dlUi.q('#p').hidden = false; dlRender(); };
         dlUi.q('#dlHere').onclick = function() { dlStart('here'); };

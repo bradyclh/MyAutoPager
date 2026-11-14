@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.5.5
+// @version      1.6.0
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -65,6 +65,8 @@
     //（單一世界的測試環境會給出假的通過）。真正的鎖必須塞成 <script> 讓它在
     // 頁面世界執行。下面這個函式是被 toString() 後整段搬過去跑的，所以不能
     // 引用任何外部變數，也只能用頁面一定有的 API。
+    // ==== guard-shared-begin ====
+    // 兩版逐字相同（static.test.js 檢查）
     function apPageGuardMain() {
         if (window.__apPageGuard) return;
         var root = document.documentElement;
@@ -170,10 +172,43 @@
             };
         } catch (e) {}
 
+        // 外站廣告腳本（如 uuread 的 popunder）在 window／document 掛 click、touchend 等監聽器：
+        // 捕獲階段吞掉整頁點擊（連腳本面板的按鈕都按不到），再趁使用者點擊開廣告分頁。
+        // 呼叫堆疊裡「全是外站網址」的這類註冊直接不掛；站方自己的程式（堆疊裡有本站網址）照常。
+        // 注入時帶 sourceURL，守衛自己的堆疊框沒有 http 網址，不會被當成本站。
+        try {
+            var siteOf = function(h) {
+                var p = String(h).toLowerCase().split('.');
+                var n = p.length > 2 && /^(com|net|org|edu|gov|co)$/.test(p[p.length - 2]) ? 3 : 2;
+                return p.slice(-n).join('.');
+            };
+            var mySite = siteOf(location.hostname);
+            var GUARD_EVT = /^(click|auxclick|dblclick|mousedown|mouseup|pointerdown|pointerup|touchstart|touchend|contextmenu)$/;
+            var fromOtherSite = function() {
+                var lim = Error.stackTraceLimit, st = '';
+                try { Error.stackTraceLimit = 50; st = String(new Error().stack || ''); } catch (e) {}
+                try { Error.stackTraceLimit = lim; } catch (e) {}
+                var urls = st.match(/https?:\/\/[^\/\s:)]+/g);
+                if (!urls) return false;
+                for (var i = 0; i < urls.length; i++) if (siteOf(urls[i].replace(/^https?:\/\//, '')) === mySite) return false;
+                return true;
+            };
+            var nativeAdd = EventTarget.prototype.addEventListener;
+            EventTarget.prototype.addEventListener = function(type, fn, opt) {
+                if ((this === window || this === document || this === document.documentElement || this === document.body) &&
+                    GUARD_EVT.test(String(type)) && fromOtherSite()) {
+                    root.setAttribute('data-ap-listener-blocked', String(+(root.getAttribute('data-ap-listener-blocked') || 0) + 1));
+                    return;
+                }
+                return nativeAdd.apply(this, arguments);
+            };
+        } catch (e) {}
+
         try { Object.defineProperty(window, '__apPageGuard', { value: true }); } catch (e) {}
         // 這個標記讓 content 世界知道守衛真的跑起來了（被 CSP 擋掉就不會有）
         root.setAttribute('data-ap-pageguard', '1');
     }
+    // ==== guard-shared-end ====
 
     var pageGuardOk = false;
 
@@ -192,7 +227,7 @@
         whenRoot(function() {
             try {
                 var sc = document.createElement('script');
-                sc.textContent = '(' + apPageGuardMain.toString() + ')();';
+                sc.textContent = '(' + apPageGuardMain.toString() + ')();\n//# sourceURL=myautopager-guard.js';
                 (document.head || document.documentElement).appendChild(sc);
                 if (sc.parentNode) sc.parentNode.removeChild(sc);
             } catch (e) {}
@@ -2589,6 +2624,19 @@
         dlUi.q('#dlTitle').value = dlGuessTitle(document);
         // 點擊與觸控都攔在面板內，不讓它們落到雙擊自動捲動與正文點擊守衛
         ['click', 'touchstart', 'touchend', 'dblclick'].forEach(function(n) { host.addEventListener(n, function(e) { e.stopPropagation(); }); });
+        // 有些站（如 uuread）的廣告腳本在 window 捕獲階段吞掉所有 click／touchend，面板按鈕收不到；
+        // 按鈕改由 pointerup 觸發（按下與放開在同一顆才算），click 只在 pointerup 沒觸發時才處理（鍵盤 Enter／空白鍵）
+        var tapBtn = null, tapAt = 0;
+        function dlTapTarget(e) { var t = e.target; return t && t.closest ? t.closest('button, [role="button"]') : null; }
+        sh.addEventListener('pointerdown', function(e) { tapBtn = dlTapTarget(e); }, true);
+        sh.addEventListener('pointercancel', function() { tapBtn = null; }, true);
+        sh.addEventListener('pointerup', function(e) {
+            var b = dlTapTarget(e);
+            if (!b || b !== tapBtn || b.disabled || !b.onclick) return;
+            tapBtn = null; tapAt = Date.now();
+            b.onclick.call(b, e);
+        }, true);
+        sh.addEventListener('click', function(e) { if (Date.now() - tapAt < 800) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
         dlUi.q('#x').onclick = function() { dlUi.q('#p').hidden = true; dlRender(); };
         dlUi.q('#mini').onclick = function() { dlUi.q('#p').hidden = false; dlRender(); };
         dlUi.q('#dlHere').onclick = function() { dlStart('here'); };
