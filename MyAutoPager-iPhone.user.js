@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.5.4
+// @version      1.5.5
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -2027,6 +2027,9 @@
         return dlNormHost(u.hostname) + path;
     }
 
+    function dlLooksLikeChapter(s) {
+        return /^\s*(第\s*[0-9０-９零〇一二兩两三四五六七八九十百千萬万]+\s*[章回節节話话卷集篇]|chapter\s*\d|ch\.?\s*\d)/i.test(s || '');
+    }
     function dlGuessTitle(doc) {
         var m = doc.querySelector('meta[property="og:novel:book_name"], meta[name="og:novel:book_name"]');
         if (m && m.getAttribute('content')) return m.getAttribute('content').trim();
@@ -2035,8 +2038,7 @@
         if (bm) return bm[1].trim();
         var parts = (doc.title || '').split(/\s*[_|｜\-–—]\s*/).filter(Boolean);
         // 標題可能是「章名_書名_站名」或「書名_章名_…_站名」（如 uuread）：先剔除像章名的段，取剩下的第一段
-        var chapterRe = /^\s*(第\s*[0-9０-９零〇一二兩两三四五六七八九十百千萬万]+\s*[章回節节話话卷集篇]|chapter\s*\d|ch\.?\s*\d)/i;
-        var rest = parts.filter(function(p) { return !chapterRe.test(p); });
+        var rest = parts.filter(function(p) { return !dlLooksLikeChapter(p); });
         if (rest.length && rest.length < parts.length) return rest[0].trim().slice(0, 100);
         return (parts.length >= 2 ? parts[1] : parts[0] || '').trim().slice(0, 100);
     }
@@ -2612,8 +2614,11 @@
             return dlApi(cfg, 'GET', '/books/' + encodeURIComponent(id)).then(function(d) {
                 dlLastBookId = id;
                 dlUi.canResume = d.chapters.length > 0;
-                dlUi.q('#dlTitle').value = d.book.title;
-                dlStatus('已存 ' + d.chapters.length + ' 章' + (d.book.next_url ? '，可續抓新章節' : '') + '。');
+                // 舊版曾把章名存成書名：存的書名像章名、這頁又猜得到別的書名時，改帶猜到的，下次下載就會寫回書架
+                var guess = dlGuessTitle(document), fixTitle = dlLooksLikeChapter(d.book.title) && guess && !dlLooksLikeChapter(guess);
+                dlUi.q('#dlTitle').value = fixTitle ? guess : d.book.title;
+                dlStatus('已存 ' + d.chapters.length + ' 章' + (d.book.next_url ? '，可續抓新章節' : '') + '。' +
+                    (fixTitle ? '書名已更正，下次下載時更新到書架。' : ''));
                 dlRender();
             }).catch(function(e) {
                 if (e.status === 404) { dlUi.canResume = false; dlStatus('這本書還沒下載過，請按「從本章開始」或「整本」。'); dlRender(); }
