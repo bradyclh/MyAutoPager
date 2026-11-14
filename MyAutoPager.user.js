@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager
-// @version      1.4.0
+// @version      1.5.0
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -82,18 +82,31 @@
     // ========== 頁面世界守衛（document-start） ==========
     // 腳本以 document-start 執行：先把守衛塞進頁面世界（要搶在廣告腳本之前掛好），
     // 其餘全部等 DOMContentLoaded 再跑，時機等同原本的 document-end。
-    // 只在帶 popupBlock 的網站裝；這時規則表還沒建，網域另列在 AP_GUARD_HOST_RE（static.test.js 檢查涵蓋所有 popupBlock 規則）
+    // 所有網站（每個網域）都裝基礎防護（level 'base'）；帶 popupBlock 的小說站裝完整防護（'full'）。
+    // 這時規則表還沒建，完整防護的網域另列在 AP_GUARD_HOST_RE（static.test.js 檢查涵蓋所有 popupBlock 規則）。
+    // 例外：AP_GUARD_EXEMPT 列出基礎防護會誤傷的網域（後綴比對）；使用者也可從選單對單一網域關閉（GM 值 adguard_off）。
+    // 只在最上層頁面裝：子框架多半是廣告或嵌入內容，popunder 的點擊攔截發生在主頁
     var AP_GUARD_HOST_RE = /(^|\.)(look\.thisiscm\.com|look\.twword\.com|uukanshu\.cc|69shuba\.tw|69shuba\.com|uuread\.tw|thepaperbooks\.com|ixdzs\.hk|ixdzs\.tw|ixdzs8\.com|qimao\.com|hjwzw\.com|ttks\.tw|twkan\.com|novels\.com\.tw|oop\.tw)$/i;
+    var AP_GUARD_EXEMPT = [];
+    function apGuardLevel() {
+        var h = location.hostname;
+        if (!h) return '';
+        try { if (window.top !== window) return ''; } catch (e) { return ''; }
+        if (AP_GUARD_EXEMPT.some(function(x) { return h === x || h.slice(-x.length - 1) === '.' + x; })) return '';
+        try { if (GM_getValue('adguard_off', []).indexOf(h) !== -1) return ''; } catch (e) {}
+        return AP_GUARD_HOST_RE.test(h) ? 'full' : 'base';
+    }
     if (document.readyState === 'loading' && !apMain.deferred) {
         apMain.deferred = true;
-        if (AP_GUARD_HOST_RE.test(location.hostname)) apInstallPageGuard();
+        var apLevel = apGuardLevel();
+        if (apLevel) apInstallPageGuard(apLevel);
         document.addEventListener('DOMContentLoaded', function() { apMain(); }, { once: true });
         return;
     }
-    function apInstallPageGuard() {
+    function apInstallPageGuard(level) {
         try {
             var sc = document.createElement('script');
-            sc.textContent = '(' + apPageGuardMain.toString() + ')();\n//# sourceURL=myautopager-guard.js';
+            sc.textContent = '(' + apPageGuardMain.toString() + ')(' + JSON.stringify({ level: level }) + ');\n//# sourceURL=myautopager-guard.js';
             (document.head || document.documentElement).appendChild(sc);
             if (sc.parentNode) sc.parentNode.removeChild(sc);
             if (document.documentElement.getAttribute('data-ap-pageguard') !== '1') console.warn('[MyAutoPager] 頁面守衛未生效（多半是網站 CSP 擋掉內嵌 script）');
@@ -101,8 +114,12 @@
     }
     // ==== guard-shared-begin ====
     // 兩版逐字相同（static.test.js 檢查）
-    function apPageGuardMain() {
+    // opts.level：'full'（預設，popupBlock 小說站）＝鎖 window.open／iframe／a.click，外站點擊監聽器全擋；
+    //             'base'（其他所有網站）＝只擋外站腳本在捕獲階段掛的點擊監聽器（popunder 吞點擊的手法），
+    //             一般網站的冒泡監聽、window.open（OAuth 登入彈窗等）都不動，避免誤傷
+    function apPageGuardMain(opts) {
         if (window.__apPageGuard) return;
+        var full = !(opts && opts.level === 'base');
         var root = document.documentElement;
         // 回報給 content 世界：資料放 DOM 屬性而不是 CustomEvent.detail，
         // detail 物件跨世界不一定讀得到，DOM 屬性一定可以
@@ -121,7 +138,7 @@
                 Object.defineProperty(win, '__apOpenLocked', { value: true });
             } catch (e) { try { win.open = blockedOpen; } catch (e2) {} }
         }
-        lock(window);
+        if (full) lock(window);
 
         // 同源 iframe（about:blank / srcdoc）的 contentWindow.open 是乾淨的，
         // 「插一個 iframe 再呼叫它的 open」是繞過覆寫的經典手法。兩個入口都堵：
@@ -166,12 +183,14 @@
                 });
             } catch (e) {}
         }
+        if (full) {
         wrapInsert(Node.prototype, 'appendChild');
         wrapInsert(Node.prototype, 'insertBefore');
         wrapInsert(Element.prototype, 'append');
         wrapInsert(Element.prototype, 'prepend');
+        }
         // 其餘插入路徑（innerHTML、parser 解析出來的）由觀察器補上
-        try {
+        if (full) try {
             new MutationObserver(function(muts) {
                 for (var i = 0; i < muts.length; i++) {
                     var added = muts[i].addedNodes;
@@ -179,7 +198,7 @@
                 }
             }).observe(document, { childList: true, subtree: true });
         } catch (e) {}
-        try {
+        if (full) try {
             var d = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
             if (d && d.get) {
                 Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
@@ -195,7 +214,7 @@
 
         // 程式化點擊：a.click() 若錨點還沒進 DOM，事件傳不到 document，
         // 點擊守衛攔不到，瀏覽器卻照樣開新分頁。只影響腳本呼叫的 .click()。
-        try {
+        if (full) try {
             var nativeClick = HTMLAnchorElement.prototype.click;
             HTMLAnchorElement.prototype.click = function() {
                 var raw = '', tgt = null;
@@ -229,8 +248,9 @@
             };
             var nativeAdd = EventTarget.prototype.addEventListener;
             EventTarget.prototype.addEventListener = function(type, fn, opt) {
+                var capture = opt === true || !!(opt && typeof opt === 'object' && opt.capture);
                 if ((this === window || this === document || this === document.documentElement || this === document.body) &&
-                    GUARD_EVT.test(String(type)) && fromOtherSite()) {
+                    GUARD_EVT.test(String(type)) && (full || capture) && fromOtherSite()) {
                     root.setAttribute('data-ap-listener-blocked', String(+(root.getAttribute('data-ap-listener-blocked') || 0) + 1));
                     return;
                 }
@@ -2843,6 +2863,12 @@
         // 6. 下載到雲端閱讀器（Aa 面板也有同樣的入口）；書架在任何網站都能開
         if (dlEligible()) menuId.push(GM_registerMenuCommand('⬇ 下載本書到閱讀器', function() { dlOpenDialog(); }));
         menuId.push(GM_registerMenuCommand('📚 開啟閱讀器書架', function() { dlOpenReader(); }));
+        // 7. 廣告防護（每個網域預設開；網站被誤傷時從這裡對本網域關閉）
+        let adOff = GM_getValue('adguard_off', []), adOn = adOff.indexOf(location.hostname) === -1;
+        menuId.push(GM_registerMenuCommand((adOn ? '🛡 廣告防護：已啟用（點擊對本網域停用）' : '⚪ 廣告防護：本網域已停用（點擊恢復）'), function() {
+            GM_setValue('adguard_off', adOn ? adOff.concat(location.hostname) : adOff.filter(function(h) { return h !== location.hostname; }));
+            location.reload();
+        }));
         // 閱讀樣式的設定在頁面上的「Aa」面板（createReadingPanel），不放選單
     }
 
