@@ -221,7 +221,7 @@ check('兩版的下載共用區塊逐字相同', () => {
 const dl = (() => {
     const ctx = { URL, console };
     vm.createContext(ctx);
-    vm.runInContext(dlDesktop + '\nthis.api = { dlTitleKey, dlJoinLines, dlShape, dlLastNum, dlBookId, dlAbsUrl, dlNormHost, dlEstimate, dlProgressText, dlGuessTitle };', ctx);
+    vm.runInContext(dlDesktop + '\nthis.api = { dlTitleKey, dlJoinLines, dlShape, dlLastNum, dlBookId, dlAbsUrl, dlNormHost, dlEstimate, dlProgressText, dlGuessTitle, dlLooksLikeChapter };', ctx);
     return ctx.api;
 })();
 
@@ -291,6 +291,8 @@ check('書名猜測：不能把章名當書名', () => {
     same(out, '章名_書名_站名', dl.dlGuessTitle(doc('第十二章 出山_劍來_某某小說網')), '劍來');
     same(out, '書名號優先', dl.dlGuessTitle(doc('第3章 下山 - 《劍來》 - 站名')), '劍來');
     same(out, 'og:novel:book_name 最優先', dl.dlGuessTitle(doc('第1章_錯的', '對的書名')), '對的書名');
+    same(out, '舊書名像章名', dl.dlLooksLikeChapter('第1章 九星大斗師！三品煉藥師！'), true);
+    same(out, '正常書名不像章名', dl.dlLooksLikeChapter('鬥破：全圖最強，我永遠在你之上'), false);
     same(out, '沒有章名時沿用第二段', dl.dlGuessTitle(doc('序言_某書_站名')), '某書');
     return out;
 });
