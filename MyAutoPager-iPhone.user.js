@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.6.0
+// @version      1.6.1
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -67,8 +67,12 @@
     // 引用任何外部變數，也只能用頁面一定有的 API。
     // ==== guard-shared-begin ====
     // 兩版逐字相同（static.test.js 檢查）
-    function apPageGuardMain() {
+    // opts.level：'full'（預設，popupBlock 小說站）＝鎖 window.open／iframe／a.click，外站點擊監聽器全擋；
+    //             'base'（其他所有網站）＝只擋外站腳本在捕獲階段掛的點擊監聽器（popunder 吞點擊的手法），
+    //             一般網站的冒泡監聽、window.open（OAuth 登入彈窗等）都不動，避免誤傷
+    function apPageGuardMain(opts) {
         if (window.__apPageGuard) return;
+        var full = !(opts && opts.level === 'base');
         var root = document.documentElement;
         // 回報給 content 世界：資料放 DOM 屬性而不是 CustomEvent.detail，
         // detail 物件跨世界不一定讀得到，DOM 屬性一定可以
@@ -87,7 +91,7 @@
                 Object.defineProperty(win, '__apOpenLocked', { value: true });
             } catch (e) { try { win.open = blockedOpen; } catch (e2) {} }
         }
-        lock(window);
+        if (full) lock(window);
 
         // 同源 iframe（about:blank / srcdoc）的 contentWindow.open 是乾淨的，
         // 「插一個 iframe 再呼叫它的 open」是繞過覆寫的經典手法。兩個入口都堵：
@@ -132,12 +136,14 @@
                 });
             } catch (e) {}
         }
+        if (full) {
         wrapInsert(Node.prototype, 'appendChild');
         wrapInsert(Node.prototype, 'insertBefore');
         wrapInsert(Element.prototype, 'append');
         wrapInsert(Element.prototype, 'prepend');
+        }
         // 其餘插入路徑（innerHTML、parser 解析出來的）由觀察器補上
-        try {
+        if (full) try {
             new MutationObserver(function(muts) {
                 for (var i = 0; i < muts.length; i++) {
                     var added = muts[i].addedNodes;
@@ -145,7 +151,7 @@
                 }
             }).observe(document, { childList: true, subtree: true });
         } catch (e) {}
-        try {
+        if (full) try {
             var d = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
             if (d && d.get) {
                 Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
@@ -161,7 +167,7 @@
 
         // 程式化點擊：a.click() 若錨點還沒進 DOM，事件傳不到 document，
         // 點擊守衛攔不到，瀏覽器卻照樣開新分頁。只影響腳本呼叫的 .click()。
-        try {
+        if (full) try {
             var nativeClick = HTMLAnchorElement.prototype.click;
             HTMLAnchorElement.prototype.click = function() {
                 var raw = '', tgt = null;
@@ -195,8 +201,9 @@
             };
             var nativeAdd = EventTarget.prototype.addEventListener;
             EventTarget.prototype.addEventListener = function(type, fn, opt) {
+                var capture = opt === true || !!(opt && typeof opt === 'object' && opt.capture);
                 if ((this === window || this === document || this === document.documentElement || this === document.body) &&
-                    GUARD_EVT.test(String(type)) && fromOtherSite()) {
+                    GUARD_EVT.test(String(type)) && (full || capture) && fromOtherSite()) {
                     root.setAttribute('data-ap-listener-blocked', String(+(root.getAttribute('data-ap-listener-blocked') || 0) + 1));
                     return;
                 }
