@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MyAutoPager (iPhone)
-// @version      1.5.5
+// @version      1.5.6
 // @updateURL    https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @downloadURL  https://raw.githubusercontent.com/bradyclh/MyAutoPager/main/MyAutoPager-iPhone.user.js
 // @author       clh (based on AutoPager by X.I.U)
@@ -2589,6 +2589,19 @@
         dlUi.q('#dlTitle').value = dlGuessTitle(document);
         // 點擊與觸控都攔在面板內，不讓它們落到雙擊自動捲動與正文點擊守衛
         ['click', 'touchstart', 'touchend', 'dblclick'].forEach(function(n) { host.addEventListener(n, function(e) { e.stopPropagation(); }); });
+        // 有些站（如 uuread）的廣告腳本在 window 捕獲階段吞掉所有 click／touchend，面板按鈕收不到；
+        // 按鈕改由 pointerup 觸發（按下與放開在同一顆才算），click 只在 pointerup 沒觸發時才處理（鍵盤 Enter／空白鍵）
+        var tapBtn = null, tapAt = 0;
+        function dlTapTarget(e) { var t = e.target; return t && t.closest ? t.closest('button, [role="button"]') : null; }
+        sh.addEventListener('pointerdown', function(e) { tapBtn = dlTapTarget(e); }, true);
+        sh.addEventListener('pointercancel', function() { tapBtn = null; }, true);
+        sh.addEventListener('pointerup', function(e) {
+            var b = dlTapTarget(e);
+            if (!b || b !== tapBtn || b.disabled || !b.onclick) return;
+            tapBtn = null; tapAt = Date.now();
+            b.onclick.call(b, e);
+        }, true);
+        sh.addEventListener('click', function(e) { if (Date.now() - tapAt < 800) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
         dlUi.q('#x').onclick = function() { dlUi.q('#p').hidden = true; dlRender(); };
         dlUi.q('#mini').onclick = function() { dlUi.q('#p').hidden = false; dlRender(); };
         dlUi.q('#dlHere').onclick = function() { dlStart('here'); };
