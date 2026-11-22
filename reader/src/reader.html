@@ -59,6 +59,9 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 #login button { width: 100%; }
 
 /* ---- 閱讀 ---- */
+/* 關掉瀏覽器的 scroll anchoring：修剪舊章、換字級時由程式自己補回位置。
+   各瀏覽器 anchoring 的時機不同，和手動補償疊加會讓畫面倒退一整章 */
+html { overflow-anchor: none; }
 /* 正文區塊限寬並置中（不是文字逐行置中） */
 #reader { max-width: 40em; margin: 0 auto; padding: 8px 16px 40vh; }
 .chap h2 { font-size: calc(var(--fs) * 1.3); line-height: 1.4; margin: 1.6em 0 1em; text-align: center; }
@@ -187,8 +190,12 @@ var cfg = {
 function autoFs() { var w = window.innerWidth; return w < 480 ? 18 : (w < 1600 ? 20 : 22); }
 function effFs() { return cfg.fsAuto ? autoFs() : cfg.fs; }
 function applyLook() {
+    var fsChanged = document.documentElement.style.getPropertyValue('--fs') !== effFs() + 'px';
+    // 字級改變會讓整篇重排：先記下畫面頂端在哪一章的哪個比例，排完再捲回去
+    var pos = fsChanged ? readingPos() : null;
     document.documentElement.setAttribute('data-theme', cfg.theme);
     document.documentElement.style.setProperty('--fs', effFs() + 'px');
+    if (pos) restorePos(pos);
     $('fsVal').textContent = effFs();
     $('fsAuto').classList.toggle('cur', cfg.fsAuto);
     $('spVal').textContent = cfg.speed;
@@ -386,12 +393,16 @@ setInterval(function() {
     if (!document.querySelector('#shelf .dl-running')) return;
     var y = window.scrollY;
     openShelf();
-    setTimeout(function() { window.scrollTo(0, y); }, 300);
+    // 這 300ms 內使用者可能已點「繼續閱讀」進入閱讀畫面，那時不能再捲
+    setTimeout(function() { if (view === 'shelf') window.scrollTo(0, y); }, 300);
 }, 20000);
 
 // ========== 閱讀 ==========
 // book：{id, title, chapters:[{idx,title,url}]}；畫面上是連續的幾章，捲到底自動接下一章
 var book = null, cache = {}, loadingNext = false, rendered = [], curIdx = -1, curRatio = 0;
+// 畫面世代：每次清空重畫（開書、跳章）就 +1；非同步載回來的章節若世代不符就丟掉，
+// 否則舊位置還在載的章節會被接到新畫面後面，往下捲就「跳回」讀過的章節
+var gen = 0;
 var localAt = 0, lastPushAt = 0, pushTimer = 0, dirty = false, remoteSeenAt = 0;
 
 function openBook(id, at) {
@@ -400,10 +411,13 @@ function openBook(id, at) {
     var box = $('reader');
     box.textContent = '';
     cache = {}; rendered = []; curIdx = -1; book = null;
+    var myGen = ++gen;
+    loadingNext = false;
     Promise.all([
         api('GET', bookPath(id)),
         api('GET', bookPath(id) + '/progress').catch(function() { return { progress: null }; })
     ]).then(function(r) {
+        if (myGen !== gen) return;
         book = { id: id, title: r[0].book.title, sourceUrl: r[0].book.source_url, chapters: r[0].chapters };
         history.replaceState(null, '', '#b=' + encodeURIComponent(id));
         if (!book.chapters.length) { box.appendChild(el('p', 'endnote', '這本書還沒有章節。')); $('barTitle').textContent = book.title; return; }
@@ -454,19 +468,25 @@ function jumpTo(idx, ratio) {
     var box = $('reader');
     box.textContent = '';
     rendered = [];
+    var myGen = ++gen;
+    loadingNext = false;
     idx = Math.max(0, Math.min(book.chapters.length - 1, idx));
+    // 章節還沒載回來前先記下目標，連按 → 時才會一章一章往後，不會重複跳到同一章
+    curIdx = idx; curRatio = ratio || 0;
     if (idx > 0) {
         var prev = el('button', 'loadmore', '← 上一章');
         prev.onclick = function() { jumpTo(idx - 1, 0); };
         box.appendChild(prev);
     }
     return fetchChapter(idx).then(function(c) {
+        if (myGen !== gen) return;
         var sec = chapterNode(c);
         box.appendChild(sec);
         rendered.push(idx);
         $('barTitle').textContent = book.title + ' · ' + c.title;
         // 等版面排好才捲到章內位置
         requestAnimationFrame(function() {
+            if (myGen !== gen) return;
             window.scrollTo(0, sec.offsetTop - barH() + (ratio || 0) * sec.offsetHeight);
             curIdx = idx; curRatio = ratio || 0;
             ensureNext();
@@ -490,12 +510,15 @@ function ensureNext() {
         return;
     }
     loadingNext = true;
+    var myGen = gen;
     fetchChapter(last + 1).then(function(c) {
+        // 載入途中跳過章：這一章屬於舊畫面，丟掉
+        if (myGen !== gen) return;
         box.appendChild(chapterNode(c));
         rendered.push(last + 1);
         // 畫面上只留最近 6 章，避免讀了一晚上之後 DOM 太大；移除上方內容要補回捲動位置
         if (rendered.length > 6) {
-            // 以留下來的章節量實際位移：Chrome 的 scroll anchoring 已自動補償時差值為 0，不會補兩次
+            // 以留下來的章節量實際位移再補回（scroll anchoring 已用 CSS 關掉，只有這裡會補）
             var keep = box.querySelectorAll('.chap')[rendered.length - 6];
             var top0 = keep.getBoundingClientRect().top;
             // 頂端的「上一章」按鈕指向已被移除的章節，一併拿掉（要往回看用目錄）
@@ -506,8 +529,27 @@ function ensureNext() {
         }
         prefetch(last + 2);
     }).catch(function(e) {
-        toast('下一章載入失敗：' + e.message, [{ label: '重試', fn: ensureNext }], 0);
-    }).then(function() { loadingNext = false; ensureNext(); });
+        if (myGen === gen) toast('下一章載入失敗：' + e.message, [{ label: '重試', fn: ensureNext }], 0);
+    }).then(function() {
+        // 舊世代的請求結束時，新畫面可能已有自己的載入在跑，不能動它的旗標
+        if (myGen !== gen) return;
+        loadingNext = false; ensureNext();
+    });
+}
+
+// 畫面頂端（頂列下方）的閱讀位置：哪一章、章內比例
+function readingPos() {
+    if (!book || view !== 'reader') return null;
+    var y = barH() + 4, secs = $('reader').querySelectorAll('.chap');
+    for (var i = 0; i < secs.length; i++) {
+        var r = secs[i].getBoundingClientRect();
+        if (r.top <= y && r.bottom > y) return { sec: secs[i], ratio: (y - r.top) / r.height };
+    }
+    return null;
+}
+function restorePos(p) {
+    var r = p.sec.getBoundingClientRect();
+    window.scrollBy(0, r.top + p.ratio * r.height - (barH() + 4));
 }
 
 // 目前章節：畫面頂端（頂列下方）落在哪一章
